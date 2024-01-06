@@ -1,0 +1,44 @@
+name: Download
+permissions: {}
+on:
+  pull_request:
+    paths:
+    - 'download/**'
+    - .github/workflows/download.yml
+  push:
+    paths:
+    - 'download/**'
+    - .github/workflows/download.yml
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: Enable debug
+        type: boolean
+        required: false
+        default: false
+      os:
+        description: Debug OS
+        required: true
+        type: choice
+        options: [ubuntu-latest, macos-latest, all]
+jobs:
+  download:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Skip run if debug enabled and job not matched
+      if: >-
+        ${{ github.event_name == 'workflow_dispatch' && inputs.debug && !
+            (inputs.os == matrix.os || inputs.os == 'all')
+        }}
+      run: exit 1
+    - uses: actions/checkout@v3
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.os }}-action
+        path: download/action.yml
+    - uses: azuwis/actions/download@main
+    - run: test -e ${{ matrix.os }}-action.zip

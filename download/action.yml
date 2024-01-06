@@ -1,0 +1,23 @@
+name: Download artifacts
+runs:
+  using: composite
+  steps:
+  - uses: actions/github-script@v7
+    with:
+      script: |
+        let allArtifacts = await github.rest.actions.listWorkflowRunArtifacts({
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          run_id: context.runId,
+        });
+        for (const artifact of allArtifacts.data.artifacts)
+        {
+          let download = await github.rest.actions.downloadArtifact({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            artifact_id: artifact.id,
+            archive_format: 'zip',
+          });
+          let fs = require('fs');
+          fs.writeFileSync(`${process.env.GITHUB_WORKSPACE}/${artifact.name}.zip`, Buffer.from(download.data));
+        }
