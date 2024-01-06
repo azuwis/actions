@@ -1,0 +1,60 @@
+name: Install Nix and setup cache
+inputs:
+  key:
+    description: Key to actions/cache
+    required: false
+    default: nix
+  nixpkgs_url:
+    description: Nixpkgs URL
+    required: false
+    default: https://nixos.org/channels/nixos-23.11
+  debug:
+    description: Enable debug
+    required: false
+    default: false
+  ttyd_login_with_age:
+    description: TTYD login with age
+    required: false
+    default: true
+  ttyd_credential:
+    description: TTYD credential
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+  - name: Disable MDS service on macOS
+    if: ${{ runner.os == 'macOS' }}
+    shell: bash
+    run: |
+      sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist || true
+  - uses: nixbuild/nix-quick-install-action@v26
+    with:
+      nix_conf: |
+        keep-derivations = true
+        keep-outputs = true
+  - shell: bash
+    env:
+      CACHE_KEY: ${{ inputs.key }}
+    run: ${{ github.action_path }}/restore.sh pre
+  - uses: actions/cache/restore@v3
+    with:
+      key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ env.CACHE_TIMESTAMP }}
+      restore-keys: |
+        ${{ env.CACHE_KEY }}-${{ runner.os }}
+      path: |
+        /nix/store
+        /nix/var
+        ~/.cache/nix
+        ~/.local/state/nix
+  - shell: bash
+    env:
+      NIXPKGS_URL: ${{ inputs.nixpkgs_url }}
+    run: ${{ github.action_path }}/restore.sh post
+  - name: Debug
+    if: ${{ inputs.debug == true || inputs.debug == 'true' }}
+    shell: bash
+    env:
+      TTYD_LOGIN_WITH_AGE: ${{ inputs.ttyd_login_with_age }}
+      TTYD_CREDENTIAL: ${{ inputs.ttyd_credential }}
+    run: ${{ github.action_path }}/debug.sh
