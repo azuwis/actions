@@ -13,13 +13,6 @@ init_nix() {
     fi
   done
 
-  if [ -n "$NIXPKGS_URL" ]
-  then
-    echo "Setup nix-channel"
-    nix-channel --add "$NIXPKGS_URL"
-    nix-channel --update
-  fi
-
   echo "Mark cache need update"
   echo "CACHE_NEED_UPDATE=yes" >> "$GITHUB_ENV"
 }
@@ -60,6 +53,13 @@ post() {
   else
     echo "Cache miss"
     init_nix
+  fi
+
+  if [ -n "$NIXPKGS_URL" ]
+  then
+    echo "Setup nix-channel"
+    nix-channel --add "$NIXPKGS_URL" nixpkgs
+    nix-channel --update
   fi
 }
 
