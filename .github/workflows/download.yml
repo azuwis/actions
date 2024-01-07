@@ -38,7 +38,7 @@ jobs:
     - uses: actions/checkout@v3
     - uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.os }}-action
+        name: ${{ matrix.os }}
         path: download/action.yml
     - uses: ./download
-    - run: test -e ${{ matrix.os }}-action.zip
+    - run: test -e ${{ matrix.os }}.zip
