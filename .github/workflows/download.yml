@@ -40,5 +40,5 @@ jobs:
       with:
         name: ${{ matrix.os }}-action
         path: download/action.yml
-    - uses: azuwis/actions/download@main
+    - uses: ./download
     - run: test -e ${{ matrix.os }}-action.zip
