@@ -29,7 +29,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-    - name: Skip run if debug enabled and job not matched
+    - name: Skip debug
       if: >-
         ${{ github.event_name == 'workflow_dispatch' && inputs.debug && !
             (inputs.os == matrix.os || inputs.os == 'all')
