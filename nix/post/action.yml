@@ -1,16 +1,10 @@
 name: Install Nix and setup cache (post actions)
-inputs:
-  gc:
-    description: Nix GC
-    required: false
-    default: false
 runs:
   using: composite
   steps:
   - name: Nix GC
-    if: ${{ env.CACHE_NEED_UPDATE == 'yes' || inputs.gc == true || inputs.gc == 'true' }}
     shell: bash
-    run: ${{ github.action_path }}/gc.sh
+    run: exec ${{ github.action_path }}/gc.sh
   - uses: actions/cache/save@v3
     if: ${{ env.CACHE_NEED_UPDATE == 'yes' }}
     with:
