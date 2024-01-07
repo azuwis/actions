@@ -35,10 +35,11 @@ jobs:
             (inputs.os == matrix.os || inputs.os == 'all')
         }}
       run: exit 1
-    - uses: azuwis/actions/nix@main
+    - uses: actions/checkout@v4
+    - uses: ./nix
       with:
         debug: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
     - name: Install tools for debug
       run: |
         nix-env -f '<nixpkgs>' -iA age cloudflared ttyd
-    - uses: azuwis/actions/nix/post@main
+    - uses: ./nix/post
