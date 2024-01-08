@@ -1,0 +1,21 @@
+name: Release
+permissions:
+  contents: write
+on:
+  push:
+    tags:
+    - test-release
+  workflow_dispatch:
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v3
+    - uses: ./release
+      with:
+        prerelease: true
+        files: 'release/*'

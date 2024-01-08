@@ -1,0 +1,65 @@
+name: Create release
+inputs:
+  files:
+    description: Files to upload as release assets
+    required: true
+  draft:
+    required: false
+    default: false
+  prerelease:
+    required: false
+    default: false
+runs:
+  using: composite
+  steps:
+  - name: Create release
+    id: create_release
+    uses: actions/github-script@v7
+    with:
+      script: |
+        const { owner, repo } = context.repo;
+        let release
+        try {
+          release = await github.rest.repos.getReleaseByTag({
+            owner,
+            repo,
+            tag: "${{ github.ref_name }}"
+          });
+          console.log('Using existing release');
+        } catch (e) {
+          console.log('Create new release');
+          release = await github.rest.repos.createRelease({
+            owner,
+            repo,
+            name: '${{ github.ref_name }}',
+            tag_name: '${{ github.ref_name }}',
+            generate_release_notes: true,
+            draft: ${{ inputs.draft == true || inputs.draft == 'true' }},
+            prerelease: ${{ inputs.prerelease == true || inputs.prerelease == 'true' }},
+          });
+        }
+        core.setOutput('release_id', release.data.id);
+  - name: Upload assets
+    uses: actions/github-script@v7
+    if: ${{ inputs.files }}
+    env:
+      FILES: ${{ inputs.files }}
+    with:
+      script: |
+        const fs = require('fs').promises;
+        const path = require('path');
+        const { owner, repo } = context.repo;
+        const release_id = '${{ steps.create_release.outputs.release_id }}';
+        const globber = await glob.create(process.env.FILES);
+        const files = await globber.glob()
+        for (const file in files) {
+          console.log('Uploading', file);
+          const name = path.basename(file);
+          await github.rest.repos.uploadReleaseAsset({
+            owner,
+            repo,
+            release_id,
+            name,
+            data: await fs.readFile(file),
+          });
+        }
