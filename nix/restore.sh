@@ -28,7 +28,7 @@ pre() {
   done
 
   echo "CACHE_KEY=$CACHE_KEY" >> "$GITHUB_ENV"
-  echo "CACHE_TIMESTAMP=$(date +%s)" >> "$GITHUB_ENV"
+  echo "CACHE_TIMESTAMP=$(date +%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
 }
 
 post() {
