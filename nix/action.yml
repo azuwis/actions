@@ -46,9 +46,9 @@ runs:
     run: exec ${{ github.action_path }}/restore.sh pre
   - uses: actions/cache/restore@v3
     with:
-      key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ env.CACHE_TIMESTAMP }}
+      key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CACHE_TIMESTAMP }}
       restore-keys: |
-        ${{ env.CACHE_KEY }}-${{ runner.os }}
+        ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}
       path: |
         /nix/store
         /nix/var

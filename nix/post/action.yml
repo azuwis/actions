@@ -8,7 +8,7 @@ runs:
   - uses: actions/cache/save@v3
     if: ${{ env.CACHE_NEED_UPDATE == 'yes' }}
     with:
-      key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ env.CACHE_TIMESTAMP }}
+      key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CACHE_TIMESTAMP }}
       path: |
         /nix/store
         /nix/var
