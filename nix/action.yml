@@ -1,5 +1,11 @@
 name: Install Nix and setup cache
 inputs:
+  nix_conf:
+    description: nix_conf pass to nixbuild/nix-quick-install-action
+    required: false
+    default: |
+      keep-derivations = true
+      keep-outputs = true
   key:
     description: Key to actions/cache
     required: false
@@ -33,9 +39,7 @@ runs:
     # Use gtar to restore /nix on macOS
     # Fetch and unpack in one step
     with:
-      nix_conf: |
-        keep-derivations = true
-        keep-outputs = true
+      nix_conf: ${{ inputs.nix_conf }}
   - shell: bash
     env:
       CACHE_KEY: ${{ inputs.key }}
