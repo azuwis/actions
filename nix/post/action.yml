@@ -2,9 +2,8 @@ name: Install Nix and setup cache (post actions)
 runs:
   using: composite
   steps:
-  - name: Nix GC
-    shell: bash
-    run: exec ${{ github.action_path }}/gc.sh
+  - shell: bash
+    run: exec ${{ github.action_path }}/save.sh pre
   - uses: actions/cache/save@v3
     if: ${{ env.CACHE_NEED_UPDATE == 'yes' }}
     with:
