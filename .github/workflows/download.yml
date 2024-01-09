@@ -20,16 +20,16 @@ on:
         description: Debug OS
         required: true
         type: choice
-        options: [ubuntu-latest, macos-latest, all]
+        options: [ubuntu-latest, all]
 jobs:
   download:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-    - name: Skip run if debug enabled and job not matched
+    - name: Skip debug
       if: >-
         ${{ github.event_name == 'workflow_dispatch' && inputs.debug && !
             (inputs.os == matrix.os || inputs.os == 'all')
@@ -42,3 +42,7 @@ jobs:
         path: download/action.yml
     - uses: ./download
     - run: test -e ${{ matrix.os }}.zip
+    - uses: ./nix
+      if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug && always() }}
+      with:
+        debug: true
