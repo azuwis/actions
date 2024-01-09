@@ -53,7 +53,7 @@ runs:
         const fs = require('fs').promises;
         const path = require('path');
         const { owner, repo } = context.repo;
-        const release_id = '${{ steps.create_release.outputs.release_id }}';
+        const release_id = ${{ steps.create_release.outputs.release_id }};
         const globber = await glob.create(process.env.FILES);
         const files = await globber.glob();
         const assets = await github.rest.repos.listReleaseAssets({
