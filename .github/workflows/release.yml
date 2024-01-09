@@ -1,0 +1,44 @@
+name: Release
+permissions:
+  contents: write
+on:
+  push:
+    paths:
+    - 'release/**'
+    - '.github/workflows/release.yml'
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: Enable debug
+        type: boolean
+        required: false
+        default: false
+      os:
+        description: Debug OS
+        required: true
+        type: choice
+        options: [ubuntu-latest, all]
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Skip debug
+      if: >-
+        ${{ github.event_name == 'workflow_dispatch' && inputs.debug && !
+            (inputs.os == matrix.os || inputs.os == 'all')
+        }}
+      run: exit 1
+    - uses: actions/checkout@v3
+    - uses: ./release
+      with:
+        prerelease: true
+        files: 'release/*'
+        tag: test-release
+    - uses: ./nix
+      if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug && always() }}
+      with:
+        debug: true
