@@ -33,12 +33,37 @@ jobs:
         }}
       run: exit 1
     - uses: actions/checkout@v3
+    - uses: ./nix
+      if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
+      with:
+        debug: true
+    - name: REPL
+      uses: actions/github-script@v7
+      if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
+      with:
+        script: |
+          const net = require('node:net');
+          const repl = require('node:repl');
+          net.createServer((socket) => {
+            const r = repl.start({
+              prompt: '> ',
+              input: socket,
+              output: socket,
+              terminal: true,
+              useGlobal: true,
+            }).on('exit', () => {
+              socket.end();
+            });
+            r.context.context = context;
+            r.context.core = core;
+            r.context.exec = exec;
+            r.context.github = github;
+            r.context.glob = glob;
+            r.context.io = io;
+            r.context.require = require;
+          }).listen(5001);
     - uses: ./release
       with:
         prerelease: true
         files: 'release/*'
         tag: test-release
-    - uses: ./nix
-      if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug && always() }}
-      with:
-        debug: true

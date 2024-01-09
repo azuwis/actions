@@ -56,8 +56,21 @@ runs:
         const release_id = '${{ steps.create_release.outputs.release_id }}';
         const globber = await glob.create(process.env.FILES);
         const files = await globber.glob();
+        const assets = await github.rest.repos.listReleaseAssets({
+          owner,
+          repo,
+          release_id,
+        });
+        assets.data.filter(e => files.map(e => path.basename(e)).includes(e.name)).forEach(e => {
+          console.log('Delete', e.name);
+          github.rest.repos.deleteReleaseAsset({
+            owner,
+            repo,
+            asset_id: e.id,
+          });
+        });
         for (const file of files) {
-          console.log('Uploading', file);
+          console.log('Upload', file);
           const name = path.basename(file);
           await github.rest.repos.uploadReleaseAsset({
             owner,
