@@ -56,17 +56,19 @@ runs:
         const release_id = ${{ steps.create_release.outputs.release_id }};
         const files = await glob.create(process.env.FILES).then(globber => globber.glob())
           .then(files => files.filter(file => fs.lstatSync(file).isFile()));
-        const assets = await github.rest.repos.listReleaseAssets({
+        await github.rest.repos.listReleaseAssets({
           owner,
           repo,
           release_id,
-        });
-        assets.data.filter(e => files.map(e => path.basename(e)).includes(e.name)).forEach(e => {
-          console.log('Delete', e.name);
-          github.rest.repos.deleteReleaseAsset({
-            owner,
-            repo,
-            asset_id: e.id,
+        }).then(resp => {
+          const basenames = files.map(file => path.basename(file));
+          resp.data.filter(asset => basenames.includes(asset.name)).forEach(asset => {
+            console.log('Delete', asset.name);
+            github.rest.repos.deleteReleaseAsset({
+              owner,
+              repo,
+              asset_id: asset.id,
+            });
           });
         });
         for (const file of files) {
