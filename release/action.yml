@@ -50,12 +50,12 @@ runs:
       FILES: ${{ inputs.files }}
     with:
       script: |
-        const fs = require('fs').promises;
+        const fs = require('fs');
         const path = require('path');
         const { owner, repo } = context.repo;
         const release_id = ${{ steps.create_release.outputs.release_id }};
-        const globber = await glob.create(process.env.FILES);
-        const files = await globber.glob();
+        const files = await glob.create(process.env.FILES).then(globber => globber.glob())
+          .then(files => files.filter(file => fs.lstatSync(file).isFile()));
         const assets = await github.rest.repos.listReleaseAssets({
           owner,
           repo,
@@ -77,6 +77,6 @@ runs:
             repo,
             release_id,
             name,
-            data: await fs.readFile(file),
+            data: fs.readFileSync(file),
           });
         }
