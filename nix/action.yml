@@ -18,14 +18,6 @@ inputs:
     description: Enable debug
     required: false
     default: false
-  ttyd_login_with_age:
-    description: TTYD login with age
-    required: false
-    default: true
-  ttyd_credential:
-    description: TTYD credential
-    required: false
-    default: ""
 runs:
   using: composite
   steps:
@@ -61,7 +53,4 @@ runs:
   - name: Debug
     if: ${{ inputs.debug == true || inputs.debug == 'true' }}
     shell: bash
-    env:
-      TTYD_LOGIN_WITH_AGE: ${{ inputs.ttyd_login_with_age }}
-      TTYD_CREDENTIAL: ${{ inputs.ttyd_credential }}
     run: exec ${{ github.action_path }}/debug.sh

@@ -1,37 +1,41 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-if [ -z "$TTYD_CREDENTIAL" ] && [ "$TTYD_LOGIN_WITH_AGE" != "true" ]
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+curl --no-progress-meter --fail --location --output ~/.ssh/authorized_keys "https://github.com/$GITHUB_ACTOR.keys"
+# Save env vars for sshd
+printenv > ~/.ssh/environment
+chmod 600 ~/.ssh/environment
+
+ssh-keygen -q -t ecdsa -f ~/.ssh/ssh_host_ecdsa_key -N ''
+cat >~/.ssh/sshd_config <<EOF
+AcceptEnv LANG LC_*
+AllowUsers $USER
+HostKey $HOME/.ssh/ssh_host_ecdsa_key
+KbdInteractiveAuthentication no
+PasswordAuthentication no
+PermitRootLogin no
+PermitUserEnvironment yes
+Port 3456
+PrintMotd no
+EOF
+if [ -f /etc/ssh/sshd_config ]
 then
-  echo "TTYD_CREDENTIAL is empty and TTYD_LOGIN_WITH_AGE not enabled, skip debug"
-  exit
+  grep '^Subsystem' /etc/ssh/sshd_config >> ~/.ssh/sshd_config
 fi
+/usr/sbin/sshd -f ~/.ssh/sshd_config
 
-ttyd_args=()
+nix-env -f '<nixpkgs>' -iA cloudflared
+cloudflared tunnel --no-autoupdate --url tcp://127.0.0.1:3456 >& /tmp/cloudflared.log &
 
-if [ -n "$TTYD_CREDENTIAL" ]
-then
-  ttyd_args=(--credential "$TTYD_CREDENTIAL")
-fi
-
-if [ "$TTYD_LOGIN_WITH_AGE" = "true" ]
-then
-  mkdir -p ~/.ttyd
-  curl --no-progress-meter --fail --location --output ~/.ttyd/"$GITHUB_ACTOR.keys" "https://github.com/$GITHUB_ACTOR.keys"
-  ttyd_args=("${ttyd_args[@]}" "$GITHUB_ACTION_PATH/login.sh")
-else
-  ttyd_args=("${ttyd_args[@]}" bash --login)
-fi
-
-nix-env -f '<nixpkgs>' -iA age cloudflared ttyd
-
-ttyd --interface 127.0.0.1 --port 3456 --writable --once "${ttyd_args[@]}" &
-cloudflared tunnel --url http://127.0.0.1:3456 2>&1 | tee /tmp/cloudflared.log &
+url=$(until grep -o -m1 '[a-z-]*\.trycloudflare\.com' /tmp/cloudflared.log; do sleep 2; done)
+cat /tmp/cloudflared.log
 
 until [ -f ~/continue ] || [ -f ~/skip ]
 do
+  echo "$url"
   sleep 10
-  grep -F -m1 '.trycloudflare.com' /tmp/cloudflared.log || true
 done
 
 if [ -f ~/skip ]

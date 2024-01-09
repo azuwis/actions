@@ -41,5 +41,5 @@ jobs:
         debug: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
     - name: Install tools for debug
       run: |
-        nix-env -f '<nixpkgs>' -iA age cloudflared ttyd
+        nix-env -f '<nixpkgs>' -iA cloudflared
     - uses: ./nix/post
