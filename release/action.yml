@@ -6,6 +6,7 @@ inputs:
   tag:
     description: Tag to create release from
     required: false
+    default: ${{ github.ref_name }}
   draft:
     required: false
     default: false
@@ -21,7 +22,7 @@ runs:
     with:
       script: |
         const { owner, repo } = context.repo;
-        const tag = '${{ inputs.tag || github.ref_name }}';
+        const tag = '${{ inputs.tag }}';
         let release
         try {
           release = await github.rest.repos.getReleaseByTag({
