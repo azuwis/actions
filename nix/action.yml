@@ -18,6 +18,9 @@ inputs:
     description: Enable debug
     required: false
     default: false
+  debug_token:
+    default: ${{ github.token }}
+    description: Set github token for gh cli
 runs:
   using: composite
   steps:
@@ -53,4 +56,6 @@ runs:
   - name: Debug
     if: ${{ inputs.debug == true || inputs.debug == 'true' || inputs.debug == 'nopause' }}
     shell: bash
+    env:
+      GH_TOKEN: ${{ inputs.debug_token }}
     run: exec ${{ github.action_path }}/debug.sh "${{ inputs.debug }}"
