@@ -32,6 +32,12 @@ cloudflared tunnel --no-autoupdate --url tcp://127.0.0.1:3456 >& /tmp/cloudflare
 url=$(until grep -o -m1 '[a-z-]*\.trycloudflare\.com' /tmp/cloudflared.log; do sleep 2; done)
 cat /tmp/cloudflared.log
 
+if [ "$1" = "nopause" ]
+then
+  echo "Nopause, exit 0"
+  exit
+fi
+
 until [ -f ~/continue ] || [ -f ~/skip ]
 do
   echo "$url"

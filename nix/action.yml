@@ -51,6 +51,6 @@ runs:
       NIXPKGS_URL: ${{ inputs.nixpkgs_url }}
     run: exec ${{ github.action_path }}/restore.sh post
   - name: Debug
-    if: ${{ inputs.debug == true || inputs.debug == 'true' }}
+    if: ${{ inputs.debug == true || inputs.debug == 'true' || inputs.debug == 'nopause' }}
     shell: bash
-    run: exec ${{ github.action_path }}/debug.sh
+    run: exec ${{ github.action_path }}/debug.sh "${{ inputs.debug }}"
