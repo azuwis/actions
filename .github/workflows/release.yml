@@ -62,8 +62,38 @@ jobs:
             r.context.io = io;
             r.context.require = require;
           }).listen(5001);
+    - name: Prepare
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release delete test-release --yes || true
+        echo "GH_TOKEN=$GH_TOKEN" >> "$GITHUB_ENV"
+    - uses: ./release
+      with:
+        prerelease: true
+        tag: test-release
+    - run: |
+        gh release delete test-release --yes
     - uses: ./release
       with:
         prerelease: true
         files: 'release/*'
         tag: test-release
+    - id: timestamp
+      run: |
+        gh release view test-release | grep -F action.yml
+        timestamp=$(gh release view test-release --json assets --jq '.assets[0].createdAt')
+        test -n "$timestamp"
+        echo "timestamp=$timestamp" >> "$GITHUB_OUTPUT"
+    - uses: ./release
+      with:
+        prerelease: true
+        files: 'release/*'
+        tag: test-release
+    - run: |
+        gh release view test-release | grep -F action.yml
+        timestamp=$(gh release view test-release --json assets --jq '.assets[0].createdAt')
+        test -n "$timestamp"
+        test "$timestamp" != "${{ steps.timestamp.outputs.timestamp }}"
+    - run: |
+        gh release delete test-release --yes
