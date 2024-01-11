@@ -11,7 +11,7 @@ pre() {
   done
   fi
 
-  nix-store --gc
+  nix-collect-garbage -d
   nix-store --optimise
   nix-store --gc --print-roots | grep -v -F -e '/proc/' -e '{lsof}'
 
