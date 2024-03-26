@@ -29,10 +29,7 @@ runs:
     shell: bash
     run: |
       sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist || true
-  - uses: nixbuild/nix-quick-install-action@9fd5b2e1f242e5fce91b157ff67e29b90950136d
-    # https://github.com/nixbuild/nix-quick-install-action/pull/40
-    # Use gtar to restore /nix on macOS
-    # Fetch and unpack in one step
+  - uses: nixbuild/nix-quick-install-action@v27
     with:
       nix_conf: ${{ inputs.nix_conf }}
   - shell: bash
