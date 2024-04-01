@@ -32,7 +32,7 @@ jobs:
             (inputs.os == matrix.os || inputs.os == 'all')
         }}
       run: exit 1
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - uses: ./nix
       if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
       with:
