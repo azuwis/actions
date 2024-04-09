@@ -20,10 +20,14 @@ PermitUserEnvironment yes
 Port 3456
 PrintMotd no
 EOF
-if [ -f /etc/ssh/sshd_config ]
-then
-  grep '^Subsystem' /etc/ssh/sshd_config >> ~/.ssh/sshd_config
-fi
+for file in /usr/lib/openssh/sftp-server /usr/libexec/sftp-server
+do
+  if [ -f "$file" ]
+  then
+    echo "Subsystem sftp $file" >> ~/.ssh/sshd_config
+    break
+  fi
+done
 /usr/sbin/sshd -f ~/.ssh/sshd_config
 
 nix-env -f '<nixpkgs>' -iA cloudflared
