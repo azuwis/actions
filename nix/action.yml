@@ -36,7 +36,7 @@ runs:
     env:
       CACHE_KEY: ${{ inputs.key }}
     run: exec ${{ github.action_path }}/restore.sh pre
-  - uses: actions/cache/restore@v3
+  - uses: actions/cache/restore@v4
     with:
       key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CACHE_TIMESTAMP }}
       restore-keys: |
