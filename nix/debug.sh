@@ -16,7 +16,7 @@ HostKey $HOME/.ssh/ssh_host_ecdsa_key
 KbdInteractiveAuthentication no
 PasswordAuthentication no
 PermitRootLogin no
-PermitUserEnvironment yes
+# PermitUserEnvironment yes
 Port 3456
 PrintMotd no
 EOF
@@ -30,13 +30,15 @@ do
 done
 /usr/sbin/sshd -f ~/.ssh/sshd_config
 
-nix-env -f '<nixpkgs>' -iA cloudflared
-cloudflared tunnel --no-autoupdate --url tcp://127.0.0.1:3456 >& /tmp/cloudflared.log &
+nix-env -f '<nixpkgs>' -iA cloudflared tmux
 
+cloudflared tunnel --no-autoupdate --url tcp://127.0.0.1:3456 >& /tmp/cloudflared.log &
 url=$(until grep -o -m1 '[a-z-]*\.trycloudflare\.com' /tmp/cloudflared.log; do sleep 2; done)
 cat /tmp/cloudflared.log
 echo
 echo "$url"
+
+tmux new-session -c "$GITHUB_WORKSPACE" -d
 
 if [ "$1" = "nopause" ]
 then
