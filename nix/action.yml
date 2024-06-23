@@ -13,7 +13,7 @@ inputs:
   nixpkgs_url:
     description: Nixpkgs URL
     required: false
-    default: https://nixos.org/channels/nixos-23.11
+    default: https://nixos.org/channels/nixos-24.05
   debug:
     description: Enable debug
     required: false
