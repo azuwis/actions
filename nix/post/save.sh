@@ -2,13 +2,14 @@
 set -eo pipefail
 
 pre() {
-  # Create gcroots for flake inputs to prevent gc, note the flake itself is excluded
+  # Create gcroot for flake input nixpkgs to prevent gc,
+  # ignore other inputs because flake inputs are lazy.
   if [ -f flake.nix ]
   then
-    nix flake archive --json --no-write-lock-file | jq -r '.inputs | .. | .path? // empty' | while read -r store_path
-  do
-    nix build --out-link "/tmp/${store_path##*/}" "$store_path"
-  done
+    if store_path=$(nix flake archive --json --dry-run | jq -r '.inputs.nixpkgs.path')
+    then
+      nix build --out-link "/tmp/${store_path##*/}" "$store_path"
+    fi
   fi
 
   nix-collect-garbage -d
