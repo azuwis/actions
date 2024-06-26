@@ -38,6 +38,7 @@ cat /tmp/cloudflared.log
 echo
 echo "$url"
 
+export TERMINFO_DIRS="$HOME/.nix-profile/share/terminfo"
 tmux new-session -c "$GITHUB_WORKSPACE" -d
 
 if [ "$1" = "nopause" ]
