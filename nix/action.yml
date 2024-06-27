@@ -28,15 +28,10 @@ inputs:
 runs:
   using: composite
   steps:
-  - name: Disable MDS service on macOS
-    if: ${{ runner.os == 'macOS' }}
-    shell: bash
-    run: |
-      sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist || true
-  - name: Clean
-    if: ${{ runner.os == 'Linux' && (inputs.clean == true || inputs.clean == 'true') }}
-    shell: bash
-    run: exec ${{ github.action_path }}/clean.sh
+  - shell: bash
+    env:
+      CLEAN: ${{ inputs.clean }}
+    run: exec ${{ github.action_path }}/prepare.sh
   - uses: nixbuild/nix-quick-install-action@v28
     with:
       nix_conf: ${{ inputs.nix_conf }}
