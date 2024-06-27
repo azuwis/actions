@@ -38,6 +38,17 @@ cat /tmp/cloudflared.log
 echo
 echo "$url"
 
+# .bashrc will not run if .bash_profile exists
+rm -f ~/.bash_profile
+# Add nix-profile to PATH
+cat << 'EOF' >> ~/.bashrc
+
+nix_bin_path="$HOME/.nix-profile/bin"
+if [ -n "${PATH##*"$nix_bin_path"}" ] && [ -n "${PATH##*"$nix_bin_path":*}" ]
+then
+  export PATH="${nix_bin_path}:$PATH"
+fi
+EOF
 export TERMINFO_DIRS="$HOME/.nix-profile/share/terminfo"
 tmux new-session -c "$GITHUB_WORKSPACE" -d
 
