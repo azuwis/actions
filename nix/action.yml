@@ -14,6 +14,10 @@ inputs:
     description: Nixpkgs URL
     required: false
     default: https://nixos.org/channels/nixos-24.05
+  clean:
+    description: Clean up disk space
+    required: false
+    default: false
   debug:
     description: Enable debug
     required: false
@@ -29,6 +33,10 @@ runs:
     shell: bash
     run: |
       sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist || true
+  - name: Clean
+    if: ${{ runner.os == 'Linux' && (inputs.clean == true || inputs.clean == 'true') }}
+    shell: bash
+    run: exec ${{ github.action_path }}/clean.sh
   - uses: nixbuild/nix-quick-install-action@v28
     with:
       nix_conf: ${{ inputs.nix_conf }}
