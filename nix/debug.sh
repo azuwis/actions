@@ -47,6 +47,12 @@ nix_bin_path="$HOME/.nix-profile/bin"
 if [ -n "${PATH##*"$nix_bin_path"}" ] && [ -n "${PATH##*"$nix_bin_path":*}" ]
 then
   export PATH="${nix_bin_path}:$PATH"
+  >&2 cat <<EOL
+USAGE:
+  tmux attach      # Enter the dev environment
+  touch ~/continue # Continue the job
+  touch ~/skip     # Skip the job
+EOL
 fi
 EOF
 export TERMINFO_DIRS="$HOME/.nix-profile/share/terminfo"
