@@ -14,7 +14,7 @@ pre() {
 
   nix-collect-garbage -d
   nix-store --optimise
-  gcroots=$(nix-store --gc --print-roots | grep -v -F -e '/proc/' -e '{lsof}')
+  gcroots=$(nix-store --gc --print-roots | grep -v -F -e '/proc/' -e '{lsof}' -e '/profiles/channels-')
   echo "$gcroots"
 
   mv -v /nix/var/gcroots /nix/var/gcroots-old || true
