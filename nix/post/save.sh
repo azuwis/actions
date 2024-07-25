@@ -14,10 +14,11 @@ pre() {
 
   nix-collect-garbage -d
   nix-store --optimise
-  nix-store --gc --print-roots | grep -v -F -e '/proc/' -e '{lsof}'
+  gcroots=$(nix-store --gc --print-roots | grep -v -F -e '/proc/' -e '{lsof}')
+  echo "$gcroots"
 
   mv -v /nix/var/gcroots /nix/var/gcroots-old || true
-  nix-store --gc --print-roots | grep -v -F -e '/proc/' -e '{lsof}' | awk '{print $3}' | sort -t - -k 2 > /nix/var/gcroots
+  echo "$gcroots" | awk '{print $3}' | sort -t - -k 2 > /nix/var/gcroots
 
   if [ -f /nix/var/gcroots-old ]
   then
