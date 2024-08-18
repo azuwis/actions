@@ -3,12 +3,12 @@ permissions: {}
 on:
   pull_request:
     paths:
-    - 'download/**'
-    - .github/workflows/download.yml
+      - 'download/**'
+      - .github/workflows/download.yml
   push:
     paths:
-    - 'download/**'
-    - .github/workflows/download.yml
+      - 'download/**'
+      - .github/workflows/download.yml
   workflow_dispatch:
     inputs:
       debug:
@@ -29,20 +29,20 @@ jobs:
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-    - name: Skip debug
-      if: >-
-        ${{ github.event_name == 'workflow_dispatch' && inputs.debug && !
-            (inputs.os == matrix.os || inputs.os == 'all')
-        }}
-      run: exit 1
-    - uses: actions/checkout@v4
-    - uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.os }}
-        path: download/action.yml
-    - uses: ./download
-    - run: test -e ${{ matrix.os }}.zip
-    - uses: ./nix
-      if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug && always() }}
-      with:
-        debug: true
+      - name: Skip debug
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' && inputs.debug && !
+              (inputs.os == matrix.os || inputs.os == 'all')
+          }}
+        run: exit 1
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: download/action.yml
+      - uses: ./download
+      - run: test -e ${{ matrix.os }}.zip
+      - uses: ./nix
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug && always() }}
+        with:
+          debug: true

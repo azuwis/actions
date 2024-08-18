@@ -4,8 +4,8 @@ permissions:
 on:
   push:
     paths:
-    - 'release/**'
-    - '.github/workflows/release.yml'
+      - 'release/**'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
     inputs:
       debug:
@@ -26,74 +26,74 @@ jobs:
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-    - name: Skip debug
-      if: >-
-        ${{ github.event_name == 'workflow_dispatch' && inputs.debug && !
-            (inputs.os == matrix.os || inputs.os == 'all')
-        }}
-      run: exit 1
-    - uses: actions/checkout@v4
-    - uses: ./nix
-      if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
-      with:
-        debug: nopause
-    - name: REPL
-      uses: actions/github-script@v7
-      if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
-      with:
-        script: |
-          const net = require('node:net');
-          const repl = require('node:repl');
-          net.createServer((socket) => {
-            const r = repl.start({
-              prompt: '> ',
-              input: socket,
-              output: socket,
-              terminal: true,
-              useGlobal: true,
-            }).on('exit', () => {
-              socket.end();
-            });
-            r.context.context = context;
-            r.context.core = core;
-            r.context.exec = exec;
-            r.context.github = github;
-            r.context.glob = glob;
-            r.context.io = io;
-            r.context.require = require;
-          }).listen(5001);
-    - name: Prepare
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        gh release delete test-release --yes || true
-        echo "GH_TOKEN=$GH_TOKEN" >> "$GITHUB_ENV"
-    - uses: ./release
-      with:
-        prerelease: true
-        tag: test-release
-    - run: |
-        gh release delete test-release --yes
-    - uses: ./release
-      with:
-        prerelease: true
-        files: 'release/*'
-        tag: test-release
-    - id: timestamp
-      run: |
-        gh release view test-release | grep -F action.yml
-        timestamp=$(gh release view test-release --json assets --jq '.assets[0].createdAt')
-        test -n "$timestamp"
-        echo "timestamp=$timestamp" >> "$GITHUB_OUTPUT"
-    - uses: ./release
-      with:
-        prerelease: true
-        files: 'release/*'
-        tag: test-release
-    - run: |
-        gh release view test-release | grep -F action.yml
-        timestamp=$(gh release view test-release --json assets --jq '.assets[0].createdAt')
-        test -n "$timestamp"
-        test "$timestamp" != "${{ steps.timestamp.outputs.timestamp }}"
-    - run: |
-        gh release delete test-release --yes
+      - name: Skip debug
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' && inputs.debug && !
+              (inputs.os == matrix.os || inputs.os == 'all')
+          }}
+        run: exit 1
+      - uses: actions/checkout@v4
+      - uses: ./nix
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
+        with:
+          debug: nopause
+      - name: REPL
+        uses: actions/github-script@v7
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
+        with:
+          script: |
+            const net = require('node:net');
+            const repl = require('node:repl');
+            net.createServer((socket) => {
+              const r = repl.start({
+                prompt: '> ',
+                input: socket,
+                output: socket,
+                terminal: true,
+                useGlobal: true,
+              }).on('exit', () => {
+                socket.end();
+              });
+              r.context.context = context;
+              r.context.core = core;
+              r.context.exec = exec;
+              r.context.github = github;
+              r.context.glob = glob;
+              r.context.io = io;
+              r.context.require = require;
+            }).listen(5001);
+      - name: Prepare
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete test-release --yes || true
+          echo "GH_TOKEN=$GH_TOKEN" >> "$GITHUB_ENV"
+      - uses: ./release
+        with:
+          prerelease: true
+          tag: test-release
+      - run: |
+          gh release delete test-release --yes
+      - uses: ./release
+        with:
+          prerelease: true
+          files: 'release/*'
+          tag: test-release
+      - id: timestamp
+        run: |
+          gh release view test-release | grep -F action.yml
+          timestamp=$(gh release view test-release --json assets --jq '.assets[0].createdAt')
+          test -n "$timestamp"
+          echo "timestamp=$timestamp" >> "$GITHUB_OUTPUT"
+      - uses: ./release
+        with:
+          prerelease: true
+          files: 'release/*'
+          tag: test-release
+      - run: |
+          gh release view test-release | grep -F action.yml
+          timestamp=$(gh release view test-release --json assets --jq '.assets[0].createdAt')
+          test -n "$timestamp"
+          test "$timestamp" != "${{ steps.timestamp.outputs.timestamp }}"
+      - run: |
+          gh release delete test-release --yes

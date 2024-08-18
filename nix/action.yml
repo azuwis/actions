@@ -28,34 +28,34 @@ inputs:
 runs:
   using: composite
   steps:
-  - shell: bash
-    env:
-      CLEAN: ${{ inputs.clean }}
-    run: exec ${{ github.action_path }}/prepare.sh
-  - uses: nixbuild/nix-quick-install-action@v28
-    with:
-      nix_conf: ${{ inputs.nix_conf }}
-  - shell: bash
-    env:
-      CACHE_KEY: ${{ inputs.key }}
-    run: exec ${{ github.action_path }}/restore.sh pre
-  - uses: actions/cache/restore@v4
-    with:
-      key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CACHE_TIMESTAMP }}
-      restore-keys: |
-        ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}
-      path: |
-        /nix/store
-        /nix/var
-        ~/.cache/nix
-        ~/.local/state/nix
-  - shell: bash
-    env:
-      NIXPKGS_URL: ${{ inputs.nixpkgs_url }}
-    run: exec ${{ github.action_path }}/restore.sh post
-  - name: Debug
-    if: ${{ inputs.debug == true || inputs.debug == 'true' || inputs.debug == 'nopause' }}
-    shell: bash
-    env:
-      GH_TOKEN: ${{ inputs.debug_token }}
-    run: exec ${{ github.action_path }}/debug.sh "${{ inputs.debug }}"
+    - shell: bash
+      env:
+        CLEAN: ${{ inputs.clean }}
+      run: exec ${{ github.action_path }}/prepare.sh
+    - uses: nixbuild/nix-quick-install-action@v28
+      with:
+        nix_conf: ${{ inputs.nix_conf }}
+    - shell: bash
+      env:
+        CACHE_KEY: ${{ inputs.key }}
+      run: exec ${{ github.action_path }}/restore.sh pre
+    - uses: actions/cache/restore@v4
+      with:
+        key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CACHE_TIMESTAMP }}
+        restore-keys: |
+          ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}
+        path: |
+          /nix/store
+          /nix/var
+          ~/.cache/nix
+          ~/.local/state/nix
+    - shell: bash
+      env:
+        NIXPKGS_URL: ${{ inputs.nixpkgs_url }}
+      run: exec ${{ github.action_path }}/restore.sh post
+    - name: Debug
+      if: ${{ inputs.debug == true || inputs.debug == 'true' || inputs.debug == 'nopause' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.debug_token }}
+      run: exec ${{ github.action_path }}/debug.sh "${{ inputs.debug }}"

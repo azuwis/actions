@@ -2,14 +2,14 @@ name: Install Nix and setup cache (post actions)
 runs:
   using: composite
   steps:
-  - shell: bash
-    run: exec ${{ github.action_path }}/save.sh pre
-  - uses: actions/cache/save@v4
-    if: ${{ env.CACHE_NEED_UPDATE == 'yes' }}
-    with:
-      key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CACHE_TIMESTAMP }}
-      path: |
-        /nix/store
-        /nix/var
-        ~/.cache/nix
-        ~/.local/state/nix
+    - shell: bash
+      run: exec ${{ github.action_path }}/save.sh pre
+    - uses: actions/cache/save@v4
+      if: ${{ env.CACHE_NEED_UPDATE == 'yes' }}
+      with:
+        key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CACHE_TIMESTAMP }}
+        path: |
+          /nix/store
+          /nix/var
+          ~/.cache/nix
+          ~/.local/state/nix

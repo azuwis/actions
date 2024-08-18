@@ -16,70 +16,70 @@ inputs:
 runs:
   using: composite
   steps:
-  - name: Create release
-    id: create_release
-    uses: actions/github-script@v7
-    with:
-      script: |
-        const { owner, repo } = context.repo;
-        const tag = '${{ inputs.tag }}';
-        let release
-        try {
-          release = await github.rest.repos.getReleaseByTag({
-            owner,
-            repo,
-            tag,
-          });
-          console.log('Using existing release');
-        } catch (e) {
-          console.log('Create new release');
-          release = await github.rest.repos.createRelease({
-            owner,
-            repo,
-            name: tag,
-            tag_name: tag,
-            generate_release_notes: true,
-            draft: ${{ inputs.draft == true || inputs.draft == 'true' }},
-            prerelease: ${{ inputs.prerelease == true || inputs.prerelease == 'true' }},
-          });
-        }
-        core.setOutput('release_id', release.data.id);
-  - name: Upload assets
-    uses: actions/github-script@v7
-    if: ${{ inputs.files }}
-    env:
-      FILES: ${{ inputs.files }}
-    with:
-      script: |
-        const fs = require('fs');
-        const path = require('path');
-        const { owner, repo } = context.repo;
-        const release_id = ${{ steps.create_release.outputs.release_id }};
-        const files = await glob.create(process.env.FILES).then(globber => globber.glob())
-          .then(files => files.filter(file => fs.lstatSync(file).isFile()));
-        await github.rest.repos.listReleaseAssets({
-          owner,
-          repo,
-          release_id,
-        }).then(resp => {
-          const basenames = files.map(file => path.basename(file));
-          resp.data.filter(asset => basenames.includes(asset.name)).forEach(asset => {
-            console.log('Delete', asset.name);
-            github.rest.repos.deleteReleaseAsset({
+    - name: Create release
+      id: create_release
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          const tag = '${{ inputs.tag }}';
+          let release
+          try {
+            release = await github.rest.repos.getReleaseByTag({
               owner,
               repo,
-              asset_id: asset.id,
+              tag,
             });
-          });
-        });
-        for (const file of files) {
-          console.log('Upload', file);
-          const name = path.basename(file);
-          await github.rest.repos.uploadReleaseAsset({
+            console.log('Using existing release');
+          } catch (e) {
+            console.log('Create new release');
+            release = await github.rest.repos.createRelease({
+              owner,
+              repo,
+              name: tag,
+              tag_name: tag,
+              generate_release_notes: true,
+              draft: ${{ inputs.draft == true || inputs.draft == 'true' }},
+              prerelease: ${{ inputs.prerelease == true || inputs.prerelease == 'true' }},
+            });
+          }
+          core.setOutput('release_id', release.data.id);
+    - name: Upload assets
+      uses: actions/github-script@v7
+      if: ${{ inputs.files }}
+      env:
+        FILES: ${{ inputs.files }}
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const { owner, repo } = context.repo;
+          const release_id = ${{ steps.create_release.outputs.release_id }};
+          const files = await glob.create(process.env.FILES).then(globber => globber.glob())
+            .then(files => files.filter(file => fs.lstatSync(file).isFile()));
+          await github.rest.repos.listReleaseAssets({
             owner,
             repo,
             release_id,
-            name,
-            data: fs.readFileSync(file),
+          }).then(resp => {
+            const basenames = files.map(file => path.basename(file));
+            resp.data.filter(asset => basenames.includes(asset.name)).forEach(asset => {
+              console.log('Delete', asset.name);
+              github.rest.repos.deleteReleaseAsset({
+                owner,
+                repo,
+                asset_id: asset.id,
+              });
+            });
           });
-        }
+          for (const file of files) {
+            console.log('Upload', file);
+            const name = path.basename(file);
+            await github.rest.repos.uploadReleaseAsset({
+              owner,
+              repo,
+              release_id,
+              name,
+              data: fs.readFileSync(file),
+            });
+          }

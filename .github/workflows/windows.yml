@@ -3,10 +3,10 @@ permissions: {}
 on:
   pull_request:
     paths:
-    - .github/workflows/windows.yml
+      - .github/workflows/windows.yml
   push:
     paths:
-    - .github/workflows/windows.yml
+      - .github/workflows/windows.yml
   workflow_dispatch:
     inputs:
       debug:
@@ -27,37 +27,37 @@ jobs:
         os: [windows-latest, windows-2019]
     runs-on: ${{ matrix.os }}
     steps:
-    - name: Skip debug
-      if: >-
-        ${{ ! (github.event_name == 'workflow_dispatch' && inputs.debug && !
-            (inputs.os != matrix.os || inputs.os == 'all'))
-        }}
-      run: exit 1
-    - uses: actions/checkout@v4
-    - run: |
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "$env:RDP_PASSWORD" -Force)
-      env:
-        RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
-    - run: |
-        curl -f -L -o ../cloudflared.exe https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
-        ../cloudflared.exe tunnel --no-autoupdate --url tcp://127.0.0.1:3389 >& /tmp/cloudflared.log &
-        url=$(until grep -o -m1 '[a-z-]*\.trycloudflare\.com' /tmp/cloudflared.log; do sleep 2; done)
+      - name: Skip debug
+        if: >-
+          ${{ ! (github.event_name == 'workflow_dispatch' && inputs.debug && !
+              (inputs.os != matrix.os || inputs.os == 'all'))
+          }}
+        run: exit 1
+      - uses: actions/checkout@v4
+      - run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "$env:RDP_PASSWORD" -Force)
+        env:
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+      - run: |
+          curl -f -L -o ../cloudflared.exe https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
+          ../cloudflared.exe tunnel --no-autoupdate --url tcp://127.0.0.1:3389 >& /tmp/cloudflared.log &
+          url=$(until grep -o -m1 '[a-z-]*\.trycloudflare\.com' /tmp/cloudflared.log; do sleep 2; done)
 
-        cat /tmp/cloudflared.log
-        echo
-        echo "cloudflared access rdp --url rdp://127.0.0.1:3389 --hostname $url"
-
-        until [ -f ~/continue ] || [ -f ~/skip ]
-        do
-          sleep 10
+          cat /tmp/cloudflared.log
+          echo
           echo "cloudflared access rdp --url rdp://127.0.0.1:3389 --hostname $url"
-        done
 
-        if [ -f ~/skip ]
-        then
-          echo "Skip, exit 1"
-          exit 1
-        fi
-      shell: bash
+          until [ -f ~/continue ] || [ -f ~/skip ]
+          do
+            sleep 10
+            echo "cloudflared access rdp --url rdp://127.0.0.1:3389 --hostname $url"
+          done
+
+          if [ -f ~/skip ]
+          then
+            echo "Skip, exit 1"
+            exit 1
+          fi
+        shell: bash
