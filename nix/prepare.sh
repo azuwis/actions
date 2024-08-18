@@ -4,10 +4,11 @@ case "$RUNNER_OS" in
 Linux)
   if [ "$(findmnt -bno size /mnt)" -gt 20000000000 ]; then
     df -h -x tmpfs
-    echo "/mnt is large, bind mount /mnt/nix, skip disk clean"
+    echo "/mnt is large, bind mount /mnt/nix"
     sudo install -d -o "$RUNNER_USER" /mnt/nix /nix
     sudo mount --bind /mnt/nix /nix
-  elif [ "$CLEAN" = true ]; then
+  fi
+  if [ "$CLEAN" = true ]; then
     echo "Disk clean, before:"
     df -h -x tmpfs
     sudo rm -rf \
