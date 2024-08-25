@@ -33,7 +33,17 @@ nix-env -f '<nixpkgs>' -iA cloudflared tmux
 cloudflared tunnel --no-autoupdate --url tcp://127.0.0.1:3456 >&/tmp/cloudflared.log &
 url=$(until grep -o -m1 '[a-z-]*\.trycloudflare\.com' /tmp/cloudflared.log; do sleep 2; done)
 cat /tmp/cloudflared.log
-echo
+cat <<'EOF'
+
+Add to ~/.ssh/config:
+
+Host *.trycloudflare.com
+    User runner
+    ProxyCommand cloudflared access tcp --hostname https://%h
+    UserKnownHostsFile /dev/null
+    StrictHostKeyChecking accept-new
+
+EOF
 echo "$url"
 
 # .bashrc will not run if .bash_profile exists
