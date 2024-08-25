@@ -10,6 +10,10 @@ inputs:
     description: Key to actions/cache
     required: false
     default: nix
+  use_nixpkgs_in_flake:
+    description: Use nixpkgs defined in flake.nix
+    required: false
+    default: true
   nixpkgs_url:
     description: Nixpkgs URL
     required: false
@@ -51,6 +55,7 @@ runs:
           ~/.local/state/nix
     - shell: bash
       env:
+        USE_NIXPKGS_IN_FLAKE: ${{ inputs.use_nixpkgs_in_flake }}
         NIXPKGS_URL: ${{ inputs.nixpkgs_url }}
       run: exec ${{ github.action_path }}/restore.sh post
     - name: Debug
