@@ -16,6 +16,11 @@ init_nix() {
 }
 
 pre() {
+  case "$RUNNER_OS" in
+  Linux) sudo systemctl stop nix-daemon || true ;;
+  macOS) sudo launchctl unload /Library/LaunchDaemons/org.nixos.nix-daemon.plist || true ;;
+  esac
+
   echo "Rename cache paths"
   for path in "${cache_paths[@]}"; do
     # Make the parent dir of cache_paths writable to $USER,
@@ -52,6 +57,11 @@ post() {
     echo "Cache miss"
     init_nix
   fi
+
+  case "$RUNNER_OS" in
+  Linux) sudo systemctl start nix-daemon || true ;;
+  macOS) sudo launchctl load -w /Library/LaunchDaemons/org.nixos.nix-daemon.plist || true ;;
+  esac
 
   if [ -e flake.nix ] && [ "$USE_NIXPKGS_IN_FLAKE" = true ]; then
     nixpkgs=$(jq -r '.nodes.nixpkgs.locked | "\(.type):\(.owner)/\(.repo)/\(.rev)"' flake.lock)
