@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-cache_paths=(/nix/store /nix/var ~/.cache/nix ~/.local/state/nix)
+cache_paths=(/nix/store /nix/var/nix/db/db.sqlite /nix/var/nix/profiles ~/.cache/nix ~/.local/state/nix)
 
 init_nix() {
   echo "Rename cache paths back"
@@ -18,6 +18,12 @@ init_nix() {
 pre() {
   echo "Rename cache paths"
   for path in "${cache_paths[@]}"; do
+    # Make the parent dir of cache_paths writable to $USER,
+    # so `mv` and actions/cache/restore have permission
+    dir=$(dirname "$path")
+    if [ -d "$dir" ]; then
+      sudo chown -v "$USER" "$dir"
+    fi
     if [ -e "$path" ]; then
       mv -v "$path" "$path.bak"
     fi
