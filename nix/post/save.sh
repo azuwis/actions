@@ -2,6 +2,11 @@
 set -eo pipefail
 
 pre() {
+  if [ "$CACHE_NEED_UPDATE" = no ]; then
+    echo "Skip clean-up, CACHE_NEED_UPDATE is no"
+    exit
+  fi
+
   # Create gcroot for flake input nixpkgs to prevent gc,
   # ignore other inputs because flake inputs are lazy.
   if [ -f flake.nix ]; then
