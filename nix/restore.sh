@@ -7,7 +7,7 @@ init_nix() {
   echo "Rename cache paths back"
   for path in "${cache_paths[@]}"; do
     if [ -e "$path.bak" ]; then
-      mv -v "$path.bak" "$path"
+      sudo mv -v "$path.bak" "$path"
     fi
   done
 
@@ -30,7 +30,7 @@ pre() {
       sudo chown -v "$USER" "$dir"
     fi
     if [ -e "$path" ]; then
-      mv -v "$path" "$path.bak"
+      sudo mv -v "$path" "$path.bak"
     fi
   done
 
@@ -48,7 +48,7 @@ post() {
       mkdir /tmp/nix-restore-post
       for path in "${cache_paths[@]}"; do
         if [ -e "$path" ]; then
-          mv -v "$path" "/tmp/nix-restore-post/${path//\//_}"
+          sudo mv -v "$path" "/tmp/nix-restore-post/${path//\//_}"
         fi
       done
       init_nix
