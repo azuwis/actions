@@ -9,6 +9,7 @@ Linux)
     sudo mount --bind /mnt/nix /nix
   fi
   if [ "$CLEAN" = true ]; then
+    echo
     echo "Disk clean, before:"
     df -h -x tmpfs
     sudo rm -rf \

@@ -48,9 +48,8 @@ post() {
   fi
 
   if [ -e flake.nix ] && [ "$USE_NIXPKGS_IN_FLAKE" = true ]; then
-    echo "Use nixpkgs in flake.nix"
     nixpkgs=$(jq -r '.nodes.nixpkgs.locked | "\(.type):\(.owner)/\(.repo)/\(.rev)"' flake.lock)
-    echo "nixpkgs: $nixpkgs"
+    echo "Use nixpkgs in flake.nix: $nixpkgs"
     outpath=$(nix flake archive --json "$nixpkgs" | jq -r '.path')
     nix registry add nixpkgs "$outpath"
     echo "NIX_PATH=nixpkgs=flake:nixpkgs" >>"$GITHUB_ENV"

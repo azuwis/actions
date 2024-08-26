@@ -15,8 +15,11 @@ pre() {
     fi
   fi
 
+  echo "::group::Nix collect garbage"
   nix-collect-garbage -d
   nix-store --optimise
+  echo "::endgroup::"
+
   gcroots=$(nix-store --gc --print-roots | grep -v -F -e '/proc/' -e '{lsof}' -e '/profiles/channels-' -e 'flake-registry.json')
   echo "$gcroots"
 
