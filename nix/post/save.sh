@@ -23,11 +23,12 @@ pre() {
   gcroots=$(nix-store --gc --print-roots | grep -v -F -e '/proc/' -e '{lsof}' -e '/profiles/channels-' -e 'flake-registry.json')
   echo "$gcroots"
 
-  mv -v /nix/var/gcroots /nix/var/gcroots-old || true
-  echo "$gcroots" | awk '{print $3}' | sort -t - -k 2 >/nix/var/gcroots
+  mkdir -p ~/.cache/nix
+  mv -v ~/.cache/nix/gcroots ~/.cache/nix/gcroots-old || true
+  echo "$gcroots" | awk '{print $3}' | sort -t - -k 2 >~/.cache/nix/gcroots
 
-  if [ -f /nix/var/gcroots-old ]; then
-    if diff -u /nix/var/gcroots-old /nix/var/gcroots; then
+  if [ -f ~/.cache/nix/gcroots-old ]; then
+    if diff -u ~/.cache/nix/gcroots-old ~/.cache/nix/gcroots; then
       echo "Gcroots are the same"
     else
       echo "Gcroots are different, mark cache need update"
