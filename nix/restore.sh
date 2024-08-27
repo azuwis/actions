@@ -21,14 +21,11 @@ pre() {
   macOS) sudo launchctl unload /Library/LaunchDaemons/org.nixos.nix-daemon.plist || true ;;
   esac
 
+  # Make the parent dir of cache_paths writable to $USER,
+  # so actions/cache/restore have permission
+  sudo chown "$USER" /nix /nix/var/nix/db
   echo "Rename cache paths"
   for path in "${cache_paths[@]}"; do
-    # Make the parent dir of cache_paths writable to $USER,
-    # so `mv` and actions/cache/restore have permission
-    dir=$(dirname "$path")
-    if [ -d "$dir" ]; then
-      sudo chown -v "$USER" "$dir"
-    fi
     if [ -e "$path" ]; then
       sudo mv -v "$path" "$path.bak"
     fi
