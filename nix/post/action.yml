@@ -11,6 +11,7 @@ runs:
         path: |
           /nix/store
           /nix/var/nix/db/db.sqlite
+          /nix/var/nix/gcroots
           /nix/var/nix/profiles
           ~/.cache/nix
           ~/.local/state/nix
