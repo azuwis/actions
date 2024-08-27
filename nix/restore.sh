@@ -42,10 +42,9 @@ post() {
       echo "Restore succeed"
     else
       echo "Restore failed, discard cache"
-      mkdir /tmp/nix-restore-post
       for path in "${cache_paths[@]}"; do
         if [ -e "$path" ]; then
-          sudo mv -v "$path" "/tmp/nix-restore-post/${path//\//_}"
+          sudo mv -v "$path" "$path.failed"
         fi
       done
       init_nix
