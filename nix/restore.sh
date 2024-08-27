@@ -7,7 +7,7 @@ init_nix() {
   echo "Rename cache paths back"
   for path in "${cache_paths[@]}"; do
     if [ -e "$path.bak" ]; then
-      mv -v "$path.bak" "$path"
+      sudo mv -v "$path.bak" "$path"
     fi
   done
 
@@ -19,7 +19,7 @@ pre() {
   echo "Rename cache paths"
   for path in "${cache_paths[@]}"; do
     if [ -e "$path" ]; then
-      mv -v "$path" "$path.bak"
+      sudo mv -v "$path" "$path.bak"
     fi
   done
 
@@ -36,7 +36,7 @@ post() {
       echo "Restore failed, discard cache"
       for path in "${cache_paths[@]}"; do
         if [ -e "$path" ]; then
-          mv -v "$path" "$path.failed"
+          sudo mv -v "$path" "$path.failed"
         fi
       done
       init_nix
