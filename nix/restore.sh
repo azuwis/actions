@@ -23,7 +23,7 @@ pre() {
 
   # Make the parent dir of cache_paths writable to $USER,
   # so actions/cache/restore have permission
-  sudo chown "$USER" /nix /nix/var/nix/db
+  sudo chown "$USER" /nix /nix/var/nix /nix/var/nix/db
   echo "Rename cache paths"
   for path in "${cache_paths[@]}"; do
     if [ -e "$path" ]; then
