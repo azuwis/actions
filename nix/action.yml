@@ -36,9 +36,15 @@ runs:
       env:
         CLEAN: ${{ inputs.clean }}
       run: exec ${{ github.action_path }}/prepare.sh
+    # nixbuild/nix-quick-install-action only support x86_64 for now
     - uses: nixbuild/nix-quick-install-action@v28
+      if: ${{ runner.arch == 'X64' }}
       with:
         nix_conf: ${{ inputs.nix_conf }}
+    - uses: cachix/install-nix-action@v27
+      if: ${{ runner.arch != 'X64' }}
+      with:
+        extra_nix_config: ${{ inputs.nix_conf }}
     - shell: bash
       env:
         CACHE_KEY: ${{ inputs.key }}

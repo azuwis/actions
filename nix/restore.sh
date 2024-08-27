@@ -16,6 +16,24 @@ init_nix() {
 }
 
 pre() {
+  echo "::group::Try stop nix-daemon"
+  case "$RUNNER_OS" in
+  Linux) sudo systemctl stop nix-daemon || true ;;
+  macOS) sudo launchctl unload /Library/LaunchDaemons/org.nixos.nix-daemon.plist || true ;;
+  esac
+  echo "::endgroup::"
+
+  if [ -e /nix/var/nix/daemon-socket ]; then
+    echo "Multi-user Nix installed, make the parent dir of cache_paths owner to $USER, for actions/cache/restore to have permissions"
+    for path in "${cache_paths[@]}"; do
+      dir=$(dirname "$path")
+      if [ -d "$dir" ] && [[ "$dir" =~ ^/nix ]]; then
+        echo "chown $USER $dir"
+        sudo chown "$USER" "$dir"
+      fi
+    done
+  fi
+
   echo "Rename cache paths"
   for path in "${cache_paths[@]}"; do
     if [ -e "$path" ]; then
@@ -45,6 +63,24 @@ post() {
     echo "Cache miss"
     init_nix
   fi
+
+  if [ -e /nix/var/nix/daemon-socket ]; then
+    echo "Multi-user Nix installed, make the parent dir of cache_paths owner back to root, or nix-daemon will complain about permission problems"
+    for path in "${cache_paths[@]}"; do
+      dir=$(dirname "$path")
+      if [ -d "$dir" ] && [[ "$dir" =~ ^/nix ]]; then
+        echo "chown root $dir"
+        sudo chown root "$dir"
+      fi
+    done
+  fi
+
+  echo "::group::Try start nix-daemon"
+  case "$RUNNER_OS" in
+  Linux) sudo systemctl start nix-daemon || true ;;
+  macOS) sudo launchctl load -w /Library/LaunchDaemons/org.nixos.nix-daemon.plist || true ;;
+  esac
+  echo "::endgroup::"
 
   if [ -e flake.nix ] && [ "$USE_NIXPKGS_IN_FLAKE" = true ]; then
     nixpkgs=$(jq -r '.nodes.nixpkgs.locked | "\(.type):\(.owner)/\(.repo)/\(.rev)"' flake.lock)
