@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-cache_paths=(/nix/store /nix/var ~/.cache/nix ~/.local/state/nix)
+cache_paths=(/nix/store /nix/var/nix/db/db.sqlite /nix/var/nix/gcroots /nix/var/nix/profiles ~/.cache/nix ~/.local/state/nix)
 
 init_nix() {
   echo "Rename cache paths back"
