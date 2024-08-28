@@ -8,6 +8,7 @@ init_nix() {
   for path in "${cache_paths[@]}"; do
     if [ -e "$path.bak" ]; then
       sudo mv -v "$path.bak" "$path"
+      sudo chown root /nix /nix/var/nix /nix/var/nix/db
     fi
   done
 
@@ -56,12 +57,16 @@ post() {
     init_nix
   fi
 
+  ls -lR /nix/var/nix/profiles
+
   echo "::group::Try start nix-daemon"
   case "$RUNNER_OS" in
   Linux) sudo systemctl start nix-daemon || true ;;
   macOS) sudo launchctl load -w /Library/LaunchDaemons/org.nixos.nix-daemon.plist || true ;;
   esac
   echo "::endgroup::"
+
+  ls -lR /nix/var/nix/profiles
 
   if [ -e flake.nix ] && [ "$USE_NIXPKGS_IN_FLAKE" = true ]; then
     nixpkgs=$(jq -r '.nodes.nixpkgs.locked | "\(.type):\(.owner)/\(.repo)/\(.rev)"' flake.lock)
