@@ -58,7 +58,7 @@ runs:
           ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}
         path: |
           /nix/store
-          /nix/var/nix/db/db.sqlite
+          /nix/var/nix/db
           /nix/var/nix/gcroots
           /nix/var/nix/profiles
           ~/.cache/nix
