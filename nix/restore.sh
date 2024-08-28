@@ -93,6 +93,7 @@ post() {
     echo "NIX_PATH=nixpkgs=flake:nixpkgs" >>"$GITHUB_ENV"
   elif [ -n "$NIXPKGS_URL" ]; then
     echo "Setup nix-channel"
+    nix store ping --store daemon
     nix-channel --add "$NIXPKGS_URL" nixpkgs
     nix-channel --update
   fi
