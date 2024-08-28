@@ -19,6 +19,9 @@ pre() {
   fi
 
   echo "::group::Nix collect garbage"
+  if [ -e /nix/var/nix/daemon-socket ]; then
+    sudo nix-collect-garbage -d
+  fi
   nix-collect-garbage -d
   nix-store --optimise
   echo "::endgroup::"
