@@ -76,6 +76,7 @@ post() {
 
   list "post middle"
 
+  sudo chown root /nix /nix/var/nix /nix/var/nix/db
   echo "::group::Try start nix-daemon"
   case "$RUNNER_OS" in
   Linux) sudo systemctl start nix-daemon || true ;;
@@ -93,7 +94,6 @@ post() {
     echo "NIX_PATH=nixpkgs=flake:nixpkgs" >>"$GITHUB_ENV"
   elif [ -n "$NIXPKGS_URL" ]; then
     echo "Setup nix-channel"
-    nix store ping --store daemon
     nix-channel --add "$NIXPKGS_URL" nixpkgs
     nix-channel --update
   fi
