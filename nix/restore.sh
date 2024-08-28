@@ -2,13 +2,7 @@
 set -eo pipefail
 
 cache_paths=(/nix/store /nix/var/nix/db /nix/var/nix/gcroots /nix/var/nix/profiles ~/.cache/nix ~/.local/state/nix)
-declare -A parent_paths
-for path in "${cache_paths[@]}"; do
-  dir=${path%/*}
-  if [ -d "$dir" ] && [[ "$dir" =~ ^/nix ]]; then
-    parent_paths[$dir]="$dir"
-  fi
-done
+parent_paths=(/nix /nix/var/nix)
 
 init_nix() {
   echo "Rename cache paths back"
