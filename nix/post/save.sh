@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
+chown_paths=(/nix/var/nix/db/reserved /nix/var/nix/db/big-lock)
+
 pre() {
   if [ "$CACHE_NEED_UPDATE" = no ]; then
     echo "Skip clean-up, CACHE_NEED_UPDATE is no"
@@ -37,6 +39,12 @@ pre() {
   else
     echo "Gcroots file does not exist, mark cache need update"
     echo "CACHE_NEED_UPDATE=yes" >>"$GITHUB_ENV"
+  fi
+
+  if [ -e /nix/var/nix/daemon-socket ]; then
+    echo "Multi-user Nix installed, change some files' owner to $USER, for actions/cache/save to have permissions"
+    echo "chown $USER ${chown_paths[*]}"
+    sudo chown "$USER" "${chown_paths[@]}"
   fi
 }
 
