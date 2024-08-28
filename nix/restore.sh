@@ -16,10 +16,12 @@ init_nix() {
 }
 
 pre() {
+  echo "::group::Try stop nix-daemon"
   case "$RUNNER_OS" in
   Linux) sudo systemctl stop nix-daemon || true ;;
   macOS) sudo launchctl unload /Library/LaunchDaemons/org.nixos.nix-daemon.plist || true ;;
   esac
+  echo "::endgroup::"
 
   # Make the parent dir of cache_paths writable to $USER,
   # so actions/cache/restore have permission
@@ -54,10 +56,12 @@ post() {
     init_nix
   fi
 
+  echo "::group::Try start nix-daemon"
   case "$RUNNER_OS" in
   Linux) sudo systemctl start nix-daemon || true ;;
   macOS) sudo launchctl load -w /Library/LaunchDaemons/org.nixos.nix-daemon.plist || true ;;
   esac
+  echo "::endgroup::"
 
   if [ -e flake.nix ] && [ "$USE_NIXPKGS_IN_FLAKE" = true ]; then
     nixpkgs=$(jq -r '.nodes.nixpkgs.locked | "\(.type):\(.owner)/\(.repo)/\(.rev)"' flake.lock)
