@@ -4,16 +4,27 @@ set -eo pipefail
 cache_paths=(/nix/store /nix/var/nix/db/db.sqlite /nix/var/nix/gcroots /nix/var/nix/profiles ~/.cache/nix ~/.local/state/nix)
 
 init_nix() {
+  list "init_nix begin"
+
   echo "Rename cache paths back"
   for path in "${cache_paths[@]}"; do
     if [ -e "$path.bak" ]; then
       sudo mv -v "$path.bak" "$path"
-      sudo chown root /nix /nix/var/nix /nix/var/nix/db
     fi
   done
 
+  list "init_nix end"
+
   echo "Mark cache need update"
   echo "CACHE_NEED_UPDATE=yes" >>"$GITHUB_ENV"
+}
+
+list() {
+  echo "::group::List files $1"
+  sudo ls -ld /nix
+  sudo ls -l /nix
+  sudo ls -lR /nix/var
+  echo "::endgroup::"
 }
 
 pre() {
@@ -23,6 +34,8 @@ pre() {
   macOS) sudo launchctl unload /Library/LaunchDaemons/org.nixos.nix-daemon.plist || true ;;
   esac
   echo "::endgroup::"
+
+  list "pre begin"
 
   # Make the parent dir of cache_paths writable to $USER,
   # so actions/cache/restore have permission
@@ -34,11 +47,15 @@ pre() {
     fi
   done
 
+  list "pre end"
+
+  echo "::endgroup::"
   echo "CACHE_KEY=$CACHE_KEY" >>"$GITHUB_ENV"
   echo "CACHE_TIMESTAMP=$(date +%Y%m%d%H%M%S)" >>"$GITHUB_ENV"
 }
 
 post() {
+  list "post begin"
   if [ -e /nix/store ]; then
     echo "Cache hit"
     if nix --version; then
@@ -57,7 +74,7 @@ post() {
     init_nix
   fi
 
-  ls -lR /nix/var/nix/profiles
+  list "post middle"
 
   echo "::group::Try start nix-daemon"
   case "$RUNNER_OS" in
@@ -66,7 +83,7 @@ post() {
   esac
   echo "::endgroup::"
 
-  ls -lR /nix/var/nix/profiles
+  list "post end"
 
   if [ -e flake.nix ] && [ "$USE_NIXPKGS_IN_FLAKE" = true ]; then
     nixpkgs=$(jq -r '.nodes.nixpkgs.locked | "\(.type):\(.owner)/\(.repo)/\(.rev)"' flake.lock)
