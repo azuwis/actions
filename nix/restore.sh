@@ -2,6 +2,13 @@
 set -eo pipefail
 
 cache_paths=(/nix/store /nix/var/nix/db/db.sqlite /nix/var/nix/gcroots /nix/var/nix/profiles ~/.cache/nix ~/.local/state/nix)
+declare -A parent_paths
+for path in "${cache_paths[@]}"; do
+  dir=${path%/*}
+  if [ -d "$dir" ] && [[ "$dir" =~ ^/nix ]]; then
+    parent_paths[$dir]="$dir"
+  fi
+done
 
 init_nix() {
   echo "Rename cache paths back"
@@ -25,13 +32,8 @@ pre() {
 
   if [ -e /nix/var/nix/daemon-socket ]; then
     echo "Multi-user Nix installed, make the parent dir of cache_paths owner to $USER, for actions/cache/restore to have permissions"
-    for path in "${cache_paths[@]}"; do
-      dir=$(dirname "$path")
-      if [ -d "$dir" ] && [[ "$dir" =~ ^/nix ]]; then
-        echo "chown $USER $dir"
-        sudo chown "$USER" "$dir"
-      fi
-    done
+    echo "chown $USER ${parent_paths[*]}"
+    sudo chown "$USER" "${parent_paths[@]}"
   fi
 
   echo "Rename cache paths"
@@ -66,13 +68,8 @@ post() {
 
   if [ -e /nix/var/nix/daemon-socket ]; then
     echo "Multi-user Nix installed, make the parent dir of cache_paths owner back to root, or nix-daemon will complain about permission problems"
-    for path in "${cache_paths[@]}"; do
-      dir=$(dirname "$path")
-      if [ -d "$dir" ] && [[ "$dir" =~ ^/nix ]]; then
-        echo "chown root $dir"
-        sudo chown root "$dir"
-      fi
-    done
+    echo "chown root ${parent_paths[*]}"
+    sudo chown root "${parent_paths[@]}"
   fi
 
   echo "::group::Try start nix-daemon"
