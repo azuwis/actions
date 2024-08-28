@@ -13,7 +13,8 @@ pre() {
   # ignore other inputs because flake inputs are lazy.
   if [ -f flake.nix ]; then
     if store_path=$(nix flake archive --json --dry-run | jq -r '.inputs.nixpkgs.path'); then
-      nix build --out-link "/tmp/${store_path##*/}" "$store_path"
+      rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
+      nix build --out-link "/tmp/nixpkgs-$rev" "$store_path"
     fi
   fi
 
