@@ -47,7 +47,8 @@ runs:
       if: ${{ runner.arch != 'X64' }}
       with:
         extra_nix_config: ${{ inputs.nix_conf }}
-    - shell: bash
+    - name: Nix restore pre
+      shell: bash
       env:
         CACHE_KEY: ${{ inputs.key }}
       run: exec ${{ github.action_path }}/restore.sh pre
@@ -63,7 +64,8 @@ runs:
           /nix/var/nix/profiles
           ~/.cache/nix
           ~/.local/state/nix
-    - shell: bash
+    - name: Nix restore post
+      shell: bash
       env:
         USE_NIXPKGS_IN_FLAKE: ${{ inputs.use_nixpkgs_in_flake }}
         NIXPKGS_URL: ${{ inputs.nixpkgs_url }}
