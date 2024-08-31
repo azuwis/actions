@@ -77,10 +77,14 @@ post() {
 
   if [ -e flake.nix ] && [ "$USE_NIXPKGS_IN_FLAKE" = true ]; then
     nixpkgs=$(jq -r '.nodes.nixpkgs.locked | "\(.type):\(.owner)/\(.repo)/\(.rev)"' flake.lock)
-    echo "Use nixpkgs in flake.nix: $nixpkgs"
-    outpath=$(nix flake archive --json "$nixpkgs" | jq -r '.path')
-    nix registry add nixpkgs "$outpath"
-    echo "NIX_PATH=nixpkgs=flake:nixpkgs" >>"$GITHUB_ENV"
+    if [ "$nixpkgs" != "null:null/null/null" ]; then
+      echo "Setup nixpkgs in flake.nix to nix registry and NIX_PATH: $nixpkgs"
+      outpath=$(nix flake archive --json "$nixpkgs" | jq -r '.path')
+      nix registry add nixpkgs "$outpath"
+      echo "NIX_PATH=nixpkgs=flake:nixpkgs" >>"$GITHUB_ENV"
+    else
+      echo "Failed to get nixpkgs in flake.nix"
+    fi
   elif [ -n "$NIXPKGS_URL" ]; then
     echo "Setup nix-channel"
     nix-channel --add "$NIXPKGS_URL" nixpkgs
