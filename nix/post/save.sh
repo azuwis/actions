@@ -26,16 +26,17 @@ pre() {
   nix-store --optimise
   echo "::endgroup::"
 
+  echo "List gcroots:"
   gcroots=$(nix-store --gc --print-roots | grep -v -F -e '/proc/' -e '{lsof}' -e '/profiles/channels-' -e 'flake-registry.json')
   echo "$gcroots"
 
-  echo "::group::Save gcroots"
+  echo "Save gcroots:"
   mkdir -p ~/.cache/nix
   mv -v ~/.cache/nix/gcroots ~/.cache/nix/gcroots-old || true
   echo "$gcroots" | awk '{print $3}' | sort -t - -k 2 >~/.cache/nix/gcroots
-  echo "::endgroup::"
 
   if [ -f ~/.cache/nix/gcroots-old ]; then
+    echo "Compare gcroots:"
     if diff -u ~/.cache/nix/gcroots-old ~/.cache/nix/gcroots; then
       echo "Gcroots are the same"
     else
