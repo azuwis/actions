@@ -2,7 +2,7 @@ name: Create release
 inputs:
   files:
     description: Files to upload as release assets
-    required: true
+    required: false
   tag:
     description: Tag to create release from
     required: false

@@ -40,6 +40,7 @@ jobs:
           Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "$env:RDP_PASSWORD" -Force)
         env:
           RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+        shell: pwsh
       - run: |
           curl -f -L -o ../cloudflared.exe https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
           ../cloudflared.exe tunnel --no-autoupdate --url tcp://127.0.0.1:3389 >& /tmp/cloudflared.log &
