@@ -23,6 +23,7 @@ on:
         options: [ubuntu-latest, macos-12, macos-latest, all]
 jobs:
   clear_cache:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.debug }}
     permissions:
       actions: write
     runs-on: ubuntu-latest
@@ -36,6 +37,7 @@ jobs:
           gh cache delete --all || true
   nix:
     needs: clear_cache
+    if: ${{ always() && !failure() && !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
