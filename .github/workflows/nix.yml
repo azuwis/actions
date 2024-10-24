@@ -20,7 +20,7 @@ on:
         description: Debug OS
         required: true
         type: choice
-        options: [ubuntu-latest, macos-12, macos-latest, all]
+        options: [ubuntu-latest, macos-13, macos-latest, all]
 jobs:
   clear_cache:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.debug }}
@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-12, macos-latest]
+        os: [ubuntu-latest, macos-13, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Skip debug
@@ -63,7 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-12, macos-latest]
+        os: [ubuntu-latest, macos-13, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
