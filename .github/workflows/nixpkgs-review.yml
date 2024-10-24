@@ -1,0 +1,54 @@
+name: Nixpkgs Review
+permissions: {}
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: Enable debug
+        type: boolean
+        required: false
+        default: false
+      os:
+        description: OS
+        required: true
+        type: choice
+        options: 
+          - '["ubuntu-latest"]'
+          - '["macos-latest"]'
+          - '["macos-13"]'
+          - '["ubuntu-latest", "macos-latest", "macos-13"]'
+      pull_request:
+        description: Pull request to review
+        type: string
+        required: true
+jobs:
+  nixpkgs-review:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.os) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./nix
+        with:
+          key: nixpkgs-review
+          debug: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
+      - name: Install tools
+        run: |
+          nix-env -f '<nixpkgs>' -iA cloudflared tmux nixpkgs-review
+      - uses: ./nix/post
+      - uses: actions/checkout@v4
+        with:
+          repository: NixOS/nixpkgs
+          path: nixpkgs
+          ref: master
+          fetch-depth: 2147483647
+      - name: Run nixpkgs-review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          cd nixpkgs
+          nixpkgs-review pr --print-result ${{ inputs.pull_request }}
