@@ -23,14 +23,13 @@ on:
         options: [ubuntu-latest, macos-13, macos-latest, all]
 jobs:
   clear_cache:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.debug }}
+    if: ${{ ! inputs.debug }}
     permissions:
       actions: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Clear cache
-        if: ${{ github.event_name != 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
