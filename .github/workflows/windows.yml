@@ -38,7 +38,8 @@ jobs:
         env:
           RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         shell: pwsh
-      - run: |
+      - shell: bash
+        run: |
           curl -f -L -o ../cloudflared.exe https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
           ../cloudflared.exe tunnel --no-autoupdate --url tcp://127.0.0.1:3389 >& /tmp/cloudflared.log &
           url=$(until grep -o -m1 '[a-z-]*\.trycloudflare\.com' /tmp/cloudflared.log; do sleep 2; done)
@@ -46,7 +47,9 @@ jobs:
           cat /tmp/cloudflared.log
           echo
           echo "cloudflared access rdp --url rdp://127.0.0.1:3389 --hostname $url"
-
+      - shell: bash
+        if: ${{ inputs.debug }}
+        run: |
           until [ -f ~/continue ] || [ -f ~/skip ]
           do
             sleep 10
@@ -58,4 +61,3 @@ jobs:
             echo "Skip, exit 1"
             exit 1
           fi
-        shell: bash
