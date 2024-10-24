@@ -20,7 +20,11 @@ on:
         description: Debug OS
         required: true
         type: choice
-        options: [ubuntu-latest, macos-13, macos-latest, all]
+        options: 
+          - '["ubuntu-latest"]'
+          - '["macos-13"]'
+          - '["macos-latest"]'
+          - '["ubuntu-latest", "macos-13", "macos-latest"]'
 jobs:
   clear_cache:
     if: ${{ ! inputs.debug }}
@@ -40,15 +44,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-13, macos-latest]
+        os: ${{ inputs.debug && fromJSON(inputs.os) || fromJSON('["ubuntu-latest", "macos-13", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Skip debug
-        if: >-
-          ${{ github.event_name == 'workflow_dispatch' && inputs.debug && !
-              (inputs.os == matrix.os || inputs.os == 'all')
-          }}
-        run: exit 1
       - uses: actions/checkout@v4
       - uses: ./nix
         with:
@@ -62,7 +60,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-13, macos-latest]
+        os: ${{ inputs.debug && fromJSON(inputs.os) || fromJSON('["ubuntu-latest", "macos-13", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
