@@ -18,21 +18,18 @@ on:
         description: Debug OS
         required: true
         type: choice
-        options: [windows-latest, windows-2019, all]
+        options: 
+          - '["windows-latest"]'
+          - '["windows-2019"]'
+          - '["windows-latest", "windows-2019"]'
 jobs:
   windows:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, windows-2019]
+        os: ${{ inputs.debug && fromJSON(inputs.os) || fromJSON('["windows-latest", "windows-2019"]') }}
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Skip debug
-        if: >-
-          ${{ ! (github.event_name == 'workflow_dispatch' && inputs.debug && !
-              (inputs.os != matrix.os || inputs.os == 'all'))
-          }}
-        run: exit 1
       - uses: actions/checkout@v4
       - run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
