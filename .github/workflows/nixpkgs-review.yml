@@ -36,14 +36,14 @@ jobs:
           debug: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
       - name: Install tools
         run: |
-          nix-env -f '<nixpkgs>' -iA cloudflared tmux nixpkgs-review
+          nix-env -f '<nixpkgs>' -iA cloudflared tmux
+          nix build --no-link --profile ~/.local/state/nix/profiles/shell github:Mic92/nixpkgs-review/pull/426/head
       - uses: ./nix/post
       - uses: actions/checkout@v4
         with:
           repository: NixOS/nixpkgs
           path: nixpkgs
           ref: master
-          fetch-depth: 2147483647
       - name: Run nixpkgs-review
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -51,4 +51,4 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
           cd nixpkgs
-          nixpkgs-review pr --print-result ${{ inputs.pull_request }}
+          nix shell ~/.local/state/nix/profiles/shell --command nixpkgs-review pr --print-result ${{ inputs.pull_request }}
