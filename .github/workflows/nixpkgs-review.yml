@@ -47,8 +47,9 @@ jobs:
       - name: Run nixpkgs-review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PULL_REQUEST: ${{ inputs.pull_request }}
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
           cd nixpkgs
-          nix shell ~/.local/state/nix/profiles/shell --command nixpkgs-review pr --print-result "${{ inputs.pull_request }}"
+          nix shell ~/.local/state/nix/profiles/shell --command nixpkgs-review pr --print-result "$PULL_REQUEST"
