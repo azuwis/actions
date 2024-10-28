@@ -22,6 +22,7 @@ on:
         description: Pull request to review
         type: string
         required: true
+run-name: Nixpkgs Review ${{ inputs.pr }}
 jobs:
   nixpkgs-review:
     strategy:
@@ -44,7 +45,7 @@ jobs:
         with:
           repository: NixOS/nixpkgs
           path: nixpkgs
-      - name: Run nixpkgs-review
+      - name: Run nixpkgs-review pr ${{ inputs.pr }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PULL_REQUEST: ${{ inputs.pr }}
