@@ -18,7 +18,7 @@ on:
           - '["macos-13"]'
           - '["macos-latest", "macos-13"]'
           - '["ubuntu-latest", "macos-latest", "macos-13"]'
-      pull_request:
+      pr:
         description: Pull request to review
         type: string
         required: true
@@ -47,7 +47,7 @@ jobs:
       - name: Run nixpkgs-review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PULL_REQUEST: ${{ inputs.pull_request }}
+          PULL_REQUEST: ${{ inputs.pr }}
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
