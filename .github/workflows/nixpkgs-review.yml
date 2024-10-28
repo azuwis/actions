@@ -43,7 +43,6 @@ jobs:
         with:
           repository: NixOS/nixpkgs
           path: nixpkgs
-          ref: master
       - name: Run nixpkgs-review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
