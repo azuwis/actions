@@ -52,3 +52,7 @@ jobs:
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
           cd nixpkgs
           nix shell ~/.local/state/nix/profiles/shell --command nixpkgs-review pr --print-result "$PULL_REQUEST"
+          cat ~/.cache/nixpkgs-review/*/report.md >> $GITHUB_STEP_SUMMARY
+          echo -e '\n---\n\n```' >> $GITHUB_STEP_SUMMARY
+          cat ~/.cache/nixpkgs-review/*/report.md >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
