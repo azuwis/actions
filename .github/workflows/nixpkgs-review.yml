@@ -16,6 +16,7 @@ on:
           - '["ubuntu-latest"]'
           - '["macos-latest"]'
           - '["macos-13"]'
+          - '["macos-latest", "macos-13"]'
           - '["ubuntu-latest", "macos-latest", "macos-13"]'
       pull_request:
         description: Pull request to review
