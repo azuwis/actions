@@ -13,11 +13,10 @@ on:
         required: true
         type: choice
         options: 
-          - '["ubuntu-latest"]'
-          - '["macos-latest"]'
-          - '["macos-13"]'
-          - '["macos-latest", "macos-13"]'
-          - '["ubuntu-latest", "macos-latest", "macos-13"]'
+          - linux
+          - darwin
+          - all
+        default: all
       pr:
         description: Pull request to review
         type: string
@@ -28,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(inputs.os) }}
+        os: ${{ fromJSON(inputs.os == 'linux' && '["ubuntu-latest"]' || (inputs.os == 'darwin' && '["macos-latest", "macos-13"]' || '["ubuntu-latest", "macos-latest", "macos-13"]')) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
