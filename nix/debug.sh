@@ -46,22 +46,22 @@ Host *.trycloudflare.com
 EOF
 echo "$url"
 
-# .bashrc will not run if .bash_profile exists
-rm -f ~/.bash_profile
 # Add nix-profile to PATH
-cat <<'EOF' >>~/.bashrc
+cat <<'EOF' >>~/.bash_profile
 
 nix_bin_path="$HOME/.nix-profile/bin"
 if [ -n "${PATH##*"$nix_bin_path"}" ] && [ -n "${PATH##*"$nix_bin_path":*}" ]
 then
   export PATH="${nix_bin_path}:$PATH"
-  >&2 cat <<EOL
+fi
+
+>&2 cat <<EOL
+
 USAGE:
   tmux attach      # Enter the dev environment
   touch ~/continue # Continue the job
   touch ~/skip     # Skip the job
 EOL
-fi
 EOF
 export TERMINFO_DIRS="$HOME/.nix-profile/share/terminfo"
 tmux new-session -c "$GITHUB_WORKSPACE" -d
