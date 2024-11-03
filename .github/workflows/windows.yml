@@ -19,15 +19,21 @@ on:
         required: true
         type: choice
         options: 
-          - '["windows-latest"]'
-          - '["windows-2019"]'
-          - '["windows-latest", "windows-2019"]'
+          - latest
+          - "2019"
+          - all
+        default: all
 jobs:
   windows:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ inputs.debug && fromJSON(inputs.os) || fromJSON('["windows-latest", "windows-2019"]') }}
+        os: >-
+          ${{ fromJSON(
+            inputs.os == 'latest' && '["windows-latest"]' || (
+            inputs.os == '2019' && '["windows-2019"]' || (
+            '["windows-latest", "windows-2019"]'
+          ))) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
