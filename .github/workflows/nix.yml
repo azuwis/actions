@@ -17,14 +17,16 @@ on:
         required: false
         default: false
       os:
-        description: Debug OS
+        description: OS to run
         required: true
         type: choice
         options: 
-          - '["ubuntu-latest"]'
-          - '["macos-13"]'
-          - '["macos-latest"]'
-          - '["ubuntu-latest", "macos-13", "macos-latest"]'
+          - linux
+          - darwin
+          - aarch64-darwin
+          - x86_64-darwin
+          - all
+        default: all
 jobs:
   clear_cache:
     if: ${{ ! inputs.debug }}
@@ -44,7 +46,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ inputs.debug && fromJSON(inputs.os) || fromJSON('["ubuntu-latest", "macos-13", "macos-latest"]') }}
+        os: >-
+          ${{ fromJSON(
+            inputs.os == 'linux' && '["ubuntu-latest"]' || (
+            inputs.os == 'darwin' && '["macos-latest", "macos-13"]' || (
+            inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
+            inputs.os == 'x86_64-darwin' && '["macos-13"]' || (
+            '["ubuntu-latest", "macos-latest", "macos-13"]'
+          ))))) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +69,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ inputs.debug && fromJSON(inputs.os) || fromJSON('["ubuntu-latest", "macos-13", "macos-latest"]') }}
+        os: >-
+          ${{ fromJSON(
+            inputs.os == 'linux' && '["ubuntu-latest"]' || (
+            inputs.os == 'darwin' && '["macos-latest", "macos-13"]' || (
+            inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
+            inputs.os == 'x86_64-darwin' && '["macos-13"]' || (
+            '["ubuntu-latest", "macos-latest", "macos-13"]'
+          ))))) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
