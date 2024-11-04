@@ -47,7 +47,7 @@ jobs:
       - name: Install tools
         run: |
           nix-env -f '<nixpkgs>' -iA cloudflared tmux
-          nix build --no-link --profile ~/.local/state/nix/profiles/shell github:Mic92/nixpkgs-review/pull/426/head
+          nix build --no-link --profile ~/.local/state/nix/profiles/shell github:Mic92/nixpkgs-review
       - uses: ./nix/post
       - uses: actions/checkout@v4
         with:
