@@ -1,7 +1,7 @@
 name: Install Nix and setup cache
 inputs:
   nix_conf:
-    description: nix_conf pass to nixbuild/nix-quick-install-action
+    description: Extra nix.conf config
     required: false
     default: |
       accept-flake-config = true
@@ -12,6 +12,10 @@ inputs:
     description: Key to actions/cache
     required: false
     default: nix
+  use_cachix_install_nix_action:
+    description: Use cachix/install-nix-action instead of nixbuild/nix-quick-install-action
+    required: false
+    default: false
   use_nixpkgs_in_flake:
     description: Use nixpkgs defined in flake.nix
     required: false
@@ -38,13 +42,12 @@ runs:
       env:
         CLEAN: ${{ inputs.clean }}
       run: exec ${{ github.action_path }}/prepare.sh
-    # nixbuild/nix-quick-install-action only support x86_64 for now
-    - uses: nixbuild/nix-quick-install-action@v28
-      if: ${{ runner.arch == 'X64' }}
+    - uses: nixbuild/nix-quick-install-action@v29
+      if: ${{ !(inputs.use_cachix_install_nix_action == true || inputs.use_cachix_install_nix_action == 'true') }}
       with:
         nix_conf: ${{ inputs.nix_conf }}
     - uses: cachix/install-nix-action@v27
-      if: ${{ runner.arch != 'X64' }}
+      if: ${{ inputs.use_cachix_install_nix_action == true || inputs.use_cachix_install_nix_action == 'true' }}
       with:
         extra_nix_config: ${{ inputs.nix_conf }}
     - name: Nix restore pre
