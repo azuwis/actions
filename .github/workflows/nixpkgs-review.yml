@@ -73,24 +73,24 @@ jobs:
     needs: nixpkgs-review
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/download-artifact@v4
-    - name: Summary
-      run: |
-        generate_summary() {
-          reports=(report-ubuntu-*/*/report.md)
-          reports+=(report-macos-*/*/report.md)
-          cat "${reports[0]}"
-          sed -s -n -e '/---/,$p' -e '1i\
-        ' "${reports[@]:1}" 2>/dev/null
-        }
+      - uses: actions/download-artifact@v4
+      - name: Summary
+        run: |
+          generate_summary() {
+            reports=(report-ubuntu-*/*/report.md)
+            reports+=(report-macos-*/*/report.md)
+            cat "${reports[0]}"
+            sed -s -n -e '/---/,$p' -e '1i\
+          ' "${reports[@]:1}" 2>/dev/null
+          }
 
-        summary=$(generate_summary)
+          summary=$(generate_summary)
 
-        cat >> $GITHUB_STEP_SUMMARY <<EOF
-        $summary
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          $summary
 
-        ---
-        \`\`\`
-        $summary
-        \`\`\`
-        EOF
+          ---
+          \`\`\`
+          $summary
+          \`\`\`
+          EOF
