@@ -34,12 +34,14 @@ jobs:
       actions: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - name: Clear cache
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh cache delete nix- || true
+          gh --repo "$GITHUB_REPOSITORY" cache list --key nix- --json id --jq '.[].id' | while read -r id
+          do
+            gh --repo "$GITHUB_REPOSITORY" cache delete "$id"
+          done
   nix:
     needs: clear_cache
     if: ${{ always() && !failure() && !cancelled() }}
