@@ -20,7 +20,9 @@ pre() {
 
   echo "::group::Nix collect garbage"
   if [ -e /nix/var/nix/daemon-socket ]; then
-    sudo nix-collect-garbage -d
+    # nix-collect-garbage not in sudo secure_path
+    ncg=$(command -v nix-collect-garbage)
+    sudo sh -c "$ncg -d"
   fi
   nix-collect-garbage -d
   nix-store --optimise
