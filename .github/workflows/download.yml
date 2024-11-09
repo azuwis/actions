@@ -14,7 +14,6 @@ on:
       debug:
         description: Enable debug
         type: boolean
-        required: false
         default: false
 jobs:
   download:

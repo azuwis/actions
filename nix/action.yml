@@ -2,7 +2,6 @@ name: Install Nix and setup cache
 inputs:
   nix_conf:
     description: Extra nix.conf config
-    required: false
     default: |
       accept-flake-config = true
       experimental-features = nix-command flakes
@@ -10,27 +9,21 @@ inputs:
       keep-outputs = true
   key:
     description: Key to actions/cache
-    required: false
     default: nix
   install_action:
     description: Set `nixbuild` to use nixbuild/nix-quick-install-action, otherwide use cachix/install-nix-action
-    required: false
     default: nixbuild
   use_nixpkgs_in_flake:
     description: Use nixpkgs defined in flake.nix
-    required: false
     default: true
   nixpkgs_url:
     description: Nixpkgs URL
-    required: false
     default: https://nixos.org/channels/nixos-24.05
   clean:
     description: Clean up disk space
-    required: false
     default: false
   debug:
     description: Enable debug
-    required: false
     default: false
   debug_token:
     default: ${{ github.token }}

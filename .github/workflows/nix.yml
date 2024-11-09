@@ -14,11 +14,9 @@ on:
       debug:
         description: Enable debug
         type: boolean
-        required: false
         default: false
       os:
         description: OS to run
-        required: true
         type: choice
         options: 
           - linux

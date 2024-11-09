@@ -6,11 +6,9 @@ on:
       debug:
         description: Enable debug
         type: boolean
-        required: false
         default: false
       os:
         description: OS
-        required: true
         type: choice
         options: 
           - linux

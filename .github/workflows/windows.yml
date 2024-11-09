@@ -12,11 +12,9 @@ on:
       debug:
         description: Enable debug
         type: boolean
-        required: false
         default: false
       os:
         description: Debug OS
-        required: true
         type: choice
         options: 
           - latest

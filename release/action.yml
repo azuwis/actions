@@ -5,13 +5,10 @@ inputs:
     required: false
   tag:
     description: Tag to create release from
-    required: false
     default: ${{ github.ref_name }}
   draft:
-    required: false
     default: false
   prerelease:
-    required: false
     default: false
 runs:
   using: composite
