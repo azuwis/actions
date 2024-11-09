@@ -97,7 +97,7 @@ jobs:
 
           summary=$(generate_summary)
 
-          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
           ## [Nixpkgs #${PR}](https://github.com/NixOS/nixpkgs/pull/${PR})
 
           $summary
