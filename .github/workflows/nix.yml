@@ -25,6 +25,14 @@ on:
           - x86_64-darwin
           - all
         default: all
+      install_action:
+        description: Install action to use
+        type: choice
+        options: 
+          - cachix
+          - nixbuild
+          - all
+        default: nixbuild
 jobs:
   clear_cache:
     if: ${{ ! inputs.debug }}
@@ -54,12 +62,20 @@ jobs:
             inputs.os == 'x86_64-darwin' && '["macos-13"]' || (
             '["ubuntu-latest", "macos-latest", "macos-13"]'
           ))))) }}
+        install_action: >-
+          ${{ fromJSON(
+            inputs.install_action == 'cachix' && '[ "cachix" ]' || (
+            inputs.install_action == 'nixbuild' && '[ "nixbuild" ]' || (
+            '[ "cachix", "nixbuild" ]'
+          ))) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./nix
         with:
           debug: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
+          install_action: ${{ matrix.install_action }}
+          key: nix-${{ matrix.install_action }}
       - name: Install tools for debug
         run: |
           nix-env -f '<nixpkgs>' -iA cloudflared tmux
@@ -77,10 +93,19 @@ jobs:
             inputs.os == 'x86_64-darwin' && '["macos-13"]' || (
             '["ubuntu-latest", "macos-latest", "macos-13"]'
           ))))) }}
+        install_action: >-
+          ${{ fromJSON(
+            inputs.install_action == 'cachix' && '[ "cachix" ]' || (
+            inputs.install_action == 'nixbuild' && '[ "nixbuild" ]' || (
+            '[ "cachix", "nixbuild" ]'
+          ))) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./nix
+        with:
+          install_action: ${{ matrix.install_action }}
+          key: nix-${{ matrix.install_action }}
       - name: Install tools for debug
         run: |
           nix-env -f '<nixpkgs>' -iA cloudflared tmux
