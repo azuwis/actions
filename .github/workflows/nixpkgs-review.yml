@@ -23,11 +23,13 @@ on:
         description: Pull request to review
         type: string
         required: true
-      use_cachix_install_nix_action:
+      install_action:
         description: Use cachix/install-nix-action
-        type: boolean
-        required: false
-        default: true
+        type: choice
+        options: 
+          - cachix
+          - nixbuild
+        default: cachix
 run-name: Nixpkgs Review ${{ inputs.pr }}
 jobs:
   nixpkgs-review:
@@ -49,7 +51,7 @@ jobs:
         with:
           key: nixpkgs-review
           debug: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
-          use_cachix_install_nix_action: ${{ inputs.use_cachix_install_nix_action }}
+          install_action: ${{ inputs.install_action }}
       - name: Install tools
         run: |
           nix-env -f '<nixpkgs>' -iA cloudflared tmux

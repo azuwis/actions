@@ -12,10 +12,10 @@ inputs:
     description: Key to actions/cache
     required: false
     default: nix
-  use_cachix_install_nix_action:
-    description: Use cachix/install-nix-action instead of nixbuild/nix-quick-install-action
+  install_action:
+    description: Set `nixbuild` to use nixbuild/nix-quick-install-action, otherwide use cachix/install-nix-action
     required: false
-    default: false
+    default: nixbuild
   use_nixpkgs_in_flake:
     description: Use nixpkgs defined in flake.nix
     required: false
@@ -43,11 +43,11 @@ runs:
         CLEAN: ${{ inputs.clean }}
       run: exec ${{ github.action_path }}/prepare.sh
     - uses: nixbuild/nix-quick-install-action@v29
-      if: ${{ !(inputs.use_cachix_install_nix_action == true || inputs.use_cachix_install_nix_action == 'true') }}
+      if: ${{ inputs.install_action == 'nixbuild' }}
       with:
         nix_conf: ${{ inputs.nix_conf }}
     - uses: cachix/install-nix-action@v27
-      if: ${{ inputs.use_cachix_install_nix_action == true || inputs.use_cachix_install_nix_action == 'true' }}
+      if: ${{ inputs.install_action != 'nixbuild' }}
       with:
         extra_nix_config: ${{ inputs.nix_conf }}
     - name: Nix restore pre
