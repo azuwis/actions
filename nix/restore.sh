@@ -17,6 +17,10 @@ init_nix() {
 }
 
 pre() {
+  INSTALL_NIX_CLI_PATH=$(readlink -f "$(command -v nix)")
+  echo "Install nix cli path: $INSTALL_NIX_CLI_PATH"
+  echo "INSTALL_NIX_CLI_PATH=$INSTALL_NIX_CLI_PATH" >>"$GITHUB_ENV"
+
   if [ -e /nix/var/nix/daemon-socket ]; then
     echo "Multi-user Nix installed"
 
@@ -45,7 +49,9 @@ pre() {
 post() {
   if [ -e /nix/store ]; then
     echo "Cache hit"
-    if nix --version; then
+    echo "Install nix cli path: $INSTALL_NIX_CLI_PATH"
+    echo "Restore nix cli path:"
+    if nix --version && readlink -f "$(command -v nix)" && [ "$INSTALL_NIX_CLI_PATH" = "$(readlink -f "$(command -v nix)")" ]; then
       echo "Restore succeed"
     else
       echo "Restore failed, discard cache"
