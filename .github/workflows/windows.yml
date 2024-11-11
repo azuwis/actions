@@ -5,6 +5,9 @@ on:
     paths:
       - .github/workflows/windows.yml
   push:
+    # Only include top-level branches, ignore branches like dependabot/*
+    branches:
+      - '*'
     paths:
       - .github/workflows/windows.yml
   workflow_dispatch:

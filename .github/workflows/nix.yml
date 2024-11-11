@@ -6,6 +6,9 @@ on:
       - 'nix/**'
       - .github/workflows/nix.yml
   push:
+    # Only include top-level branches, ignore branches like dependabot/*
+    branches:
+      - '*'
     paths:
       - 'nix/**'
       - .github/workflows/nix.yml

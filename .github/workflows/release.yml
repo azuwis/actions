@@ -2,7 +2,14 @@ name: Release
 permissions:
   contents: write
 on:
+  pull_request:
+    paths:
+      - 'release/**'
+      - '.github/workflows/release.yml'
   push:
+    # Only include top-level branches, ignore branches like dependabot/*
+    branches:
+      - '*'
     paths:
       - 'release/**'
       - '.github/workflows/release.yml'

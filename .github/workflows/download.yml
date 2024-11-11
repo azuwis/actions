@@ -6,6 +6,9 @@ on:
       - 'download/**'
       - .github/workflows/download.yml
   push:
+    # Only include top-level branches, ignore branches like dependabot/*
+    branches:
+      - '*'
     paths:
       - 'download/**'
       - .github/workflows/download.yml
