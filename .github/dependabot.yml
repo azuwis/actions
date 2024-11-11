@@ -1,6 +1,12 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    # https://github.com/dependabot/dependabot-core/issues/6704
+    # Need to list every dirs containing the composite `action.yml` file
+    directories:
+      - /
+      - /download
+      - /nix
+      - /release
     schedule:
       interval: weekly
