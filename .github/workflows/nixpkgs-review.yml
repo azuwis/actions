@@ -76,6 +76,8 @@ jobs:
             ~/.cache/nixpkgs-review/
             !~/.cache/nixpkgs-review/*/results/
   summary:
+    # For displaying `Final summary` in `Summary`
+    name: Final
     needs: nixpkgs-review
     if: ${{ always() }}
     runs-on: ubuntu-latest
