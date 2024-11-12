@@ -1,4 +1,4 @@
-name: Download artifacts
+name: Download artifacts without unpacking
 runs:
   using: composite
   steps:
