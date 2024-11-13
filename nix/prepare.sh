@@ -2,12 +2,6 @@
 
 case "$RUNNER_OS" in
 Linux)
-  if [ "$(findmnt -bno size /mnt)" -gt 20000000000 ]; then
-    df -h -x tmpfs
-    echo "/mnt is large, bind mount /mnt/nix"
-    sudo install -d -o "$RUNNER_USER" /mnt/nix /nix
-    sudo mount --bind /mnt/nix /nix
-  fi
   if [ "$CLEAN" = true ]; then
     echo
     echo "Disk clean, before:"
@@ -40,15 +34,22 @@ Linux)
     echo "After:"
     df -h -x tmpfs
   fi
-  # if [ "$BTRFS" = true ]; then
-  #   sudo touch /btrfs /mnt/btrfs
-  #   sudo fallocate -z -l 42949672960 /btrfs
-  #   sudo fallocate -z -l 42949672960 /mnt/btrfs
-  #   sudo losetup /dev/loop6 /mnt/btrfs
-  #   sudo losetup /dev/loop7 /btrfs
-  #   sudo mkfs.btrfs --data raid0 /dev/loop6 /dev/loop7
-  #   sudo mount -t btrfs -o compress=zstd /dev/loop6 /nix
-  # fi
+  if [ "$BTRFS" = true ]; then
+    sudo touch /btrfs /mnt/btrfs
+    sudo fallocate --zero-range --length "$(($(df --block-size=1 --output=avail / | sed -n 2p) - 2147483648))" /btrfs
+    sudo fallocate --zero-range --length "$(df --block-size=1 --output=avail /mnt | sed -n 2p)" /mnt/btrfs
+    sudo losetup /dev/loop6 /mnt/btrfs
+    sudo losetup /dev/loop7 /btrfs
+    sudo mkfs.btrfs --data raid0 /dev/loop6 /dev/loop7
+    sudo mkdir /nix
+    sudo mount -t btrfs -o compress=zstd /dev/loop6 /nix
+    sudo chown "${RUNNER_USER}:" /nix
+  elif [ "$(findmnt -bno size /mnt)" -gt 20000000000 ]; then
+    df -h -x tmpfs
+    echo "/mnt is large, bind mount /mnt/nix"
+    sudo install -d -o "$RUNNER_USER" /mnt/nix /nix
+    sudo mount --bind /mnt/nix /nix
+  fi
   ;;
 macOS)
   # Disable MDS service on macOS

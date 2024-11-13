@@ -23,6 +23,9 @@ inputs:
   clean:
     description: Clean up disk space
     default: false
+  btrfs:
+    description: Use BTRFS to setup RAID0
+    default: false
   debug:
     description: Enable debug
     default: false
@@ -35,6 +38,7 @@ runs:
     - shell: bash
       env:
         CLEAN: ${{ inputs.clean }}
+        BTRFS: ${{ inputs.btrfs }}
       run: exec ${{ github.action_path }}/prepare.sh
     - uses: nixbuild/nix-quick-install-action@v29
       if: ${{ inputs.install_action == 'nixbuild' }}
