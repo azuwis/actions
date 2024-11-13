@@ -22,7 +22,7 @@ on:
         type: string
         required: true
       install_action:
-        description: Use cachix/install-nix-action
+        description: Use cachix/install-nix-action or nixbuild/nix-quick-install-action
         type: choice
         options: 
           - cachix
