@@ -28,6 +28,10 @@ on:
           - cachix
           - nixbuild
         default: cachix
+      btrfs:
+        description: Clean up disk and enable BTRFS RAID0 on Linux to get max disk space
+        type: boolean
+        default: false
 run-name: Nixpkgs Review ${{ inputs.pr }}
 jobs:
   nixpkgs-review:
@@ -50,6 +54,8 @@ jobs:
           key: nixpkgs-review
           debug: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
           install_action: ${{ inputs.install_action }}
+          clean: ${{ inputs.btrfs }}
+          btrfs: ${{ inputs.btrfs }}
       - name: Install tools
         run: |
           nix-env -f '<nixpkgs>' -iA cloudflared tmux
