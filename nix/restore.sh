@@ -101,6 +101,10 @@ post() {
     nix-channel --add "$NIXPKGS_URL" nixpkgs
     nix-channel --update
   fi
+
+  echo "Setup ~/.nix-defexpr for nix-env"
+  mkdir -p ~/.nix-defexpr
+  echo 'import <nixpkgs>' >~/.nix-defexpr/default.nix
 }
 
 "$@"
