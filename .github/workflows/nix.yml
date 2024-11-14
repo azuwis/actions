@@ -89,6 +89,7 @@ jobs:
           nix-env -f '<nixpkgs>' -iA cloudflared tmux
       - uses: ./nix/post
   nix_with_cache:
+    if: ${{ ! inputs.debug }}
     needs: nix
     strategy:
       fail-fast: false
