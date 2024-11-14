@@ -50,8 +50,9 @@ post() {
   if [ -e /nix/store ]; then
     echo "Cache hit"
     echo "Install nix cli path: $INSTALL_NIX_CLI_PATH"
-    echo "Restore nix cli path:"
-    if nix --version && readlink -f "$(command -v nix)" && [ "$INSTALL_NIX_CLI_PATH" = "$(readlink -f "$(command -v nix)")" ]; then
+    restore_nix_cli_path=$(readlink -f "$(command -v nix)")
+    echo "Restore nix cli path: $restore_nix_cli_path"
+    if [ "$INSTALL_NIX_CLI_PATH" = "$restore_nix_cli_path" ]; then
       echo "Restore succeed"
     else
       echo "Restore failed, discard cache"
