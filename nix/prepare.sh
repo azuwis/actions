@@ -32,13 +32,14 @@ Linux)
     echo
     echo "After:"
     df -h -x tmpfs
+    echo
   fi
   if [ "$BTRFS" = true ]; then
     sudo touch /btrfs /mnt/btrfs
     sudo fallocate --zero-range --length "$(($(df --block-size=1 --output=avail / | sed -n 2p) - 2147483648))" /btrfs
     sudo fallocate --zero-range --length "$(df --block-size=1 --output=avail /mnt | sed -n 2p)" /mnt/btrfs
-    sudo losetup /dev/loop6 /mnt/btrfs
-    sudo losetup /dev/loop7 /btrfs
+    sudo losetup /dev/loop6 /btrfs
+    sudo losetup /dev/loop7 /mnt/btrfs
     sudo mkfs.btrfs --data raid0 /dev/loop6 /dev/loop7
     sudo mkdir /nix
     sudo mount -t btrfs -o compress=zstd /dev/loop6 /nix
