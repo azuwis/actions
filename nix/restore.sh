@@ -97,9 +97,13 @@ post() {
       echo "Failed to get nixpkgs in flake.nix"
     fi
   elif [ -n "$NIXPKGS_URL" ]; then
-    echo "Setup nix-channel"
-    nix-channel --add "$NIXPKGS_URL" nixpkgs
-    nix-channel --update
+    if [ "$(nix-channel --list | awk '/^nixpkgs / {print $2}')" = "$NIXPKGS_URL" ]; then
+      echo "Skip setup nix-channel, use cached nixpkgs $NIXPKGS_URL"
+    else
+      echo "Setup nix-channel nixpkgs to $NIXPKGS_URL"
+      nix-channel --add "$NIXPKGS_URL" nixpkgs
+      nix-channel --update
+    fi
   fi
 
   echo "Setup ~/.nix-defexpr for nix-env"
