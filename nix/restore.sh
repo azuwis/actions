@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-cache_paths=(/nix/store /nix/var/nix/db /nix/var/nix/gcroots /nix/var/nix/profiles ~/.cache/nix ~/.local/state/nix)
+cache_paths=(/nix/store /nix/var/nix/db /nix/var/nix/gcroots /nix/var/nix/profiles ~/.cache/nix ~/.local/state/nix ~/.nix-channels ~/.nix-defexpr)
 parent_paths=(/nix /nix/var/nix)
 
 init_nix() {
