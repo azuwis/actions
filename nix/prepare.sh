@@ -35,7 +35,9 @@ Linux)
     echo
   fi
   if [ "$BTRFS" = true ]; then
+    echo "Make /nix BTRFS RAID0 from /btrfs and /mnt/btrfs"
     sudo touch /btrfs /mnt/btrfs
+    sudo chmod 600 /btrfs /mnt/btrfs
     sudo fallocate --zero-range --length "$(($(df --block-size=1 --output=avail / | sed -n 2p) - 2147483648))" /btrfs
     sudo fallocate --zero-range --length "$(df --block-size=1 --output=avail /mnt | sed -n 2p)" /mnt/btrfs
     sudo losetup /dev/loop6 /btrfs
