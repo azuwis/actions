@@ -37,7 +37,7 @@ on:
           - all
         default: nixbuild
       btrfs:
-        description: Enable BTRFS RAID0
+        description: Enable BTRFS RAID0 on Linux
         type: boolean
         default: false
 jobs:
@@ -81,6 +81,7 @@ jobs:
       - uses: ./nix
         with:
           btrfs: ${{ inputs.btrfs }}
+          clean: ${{ inputs.btrfs }}
           debug: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
           install_action: ${{ matrix.install_action }}
           key: nix-${{ matrix.install_action }}
