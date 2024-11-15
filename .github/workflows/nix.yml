@@ -126,3 +126,32 @@ jobs:
       - name: Test if cache does not need update
         run: |
           [ "$CACHE_NEED_UPDATE" != yes ]
+  nix_with_btrfs:
+    if: ${{ ! inputs.debug }}
+    needs: nix
+    strategy:
+      fail-fast: false
+      matrix:
+        os: >-
+          ${{ fromJSON(
+            inputs.os == 'linux' && '["ubuntu-latest"]' || (
+            inputs.os == 'darwin' && '["macos-latest", "macos-13"]' || (
+            inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
+            inputs.os == 'x86_64-darwin' && '["macos-13"]' || (
+            '["ubuntu-latest", "macos-latest", "macos-13"]'
+          ))))) }}
+        install_action: >-
+          ${{ fromJSON(
+            inputs.install_action == 'cachix' && '[ "cachix" ]' || (
+            inputs.install_action == 'nixbuild' && '[ "nixbuild" ]' || (
+            '[ "cachix", "nixbuild" ]'
+          ))) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./nix
+        with:
+          btrfs: true
+          clean: true
+          install_action: ${{ matrix.install_action }}
+          key: nix-${{ matrix.install_action }}
