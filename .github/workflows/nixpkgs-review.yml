@@ -109,19 +109,22 @@ jobs:
 
           EOF
                 for package in "${packages[@]}"; do
-                  cat <<EOF
+                  log="${report%/*}"/logs/"$package"-*.log
+                  if [ -e "$log" ]; then
+                    cat <<EOF
           <details>
             <summary>:x: $package</summary>
 
           \`\`\`\`
           \`\`\`
           EOF
-                  tail -n 25 "${report%/*}"/logs/"$package"-*.log
-                  cat <<EOF
+                    tail -n 25 "$log"
+                    cat <<EOF
           \`\`\`
           \`\`\`\`
           </details>
           EOF
+                  fi
                 done
               fi
             done
