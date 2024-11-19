@@ -82,7 +82,7 @@ jobs:
         with:
           btrfs: ${{ inputs.btrfs }}
           clean: ${{ inputs.btrfs }}
-          debug: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
+          debug: ${{ inputs.debug }}
           install_action: ${{ matrix.install_action }}
           key: nix-${{ matrix.install_action }}
       - name: Install tools for debug

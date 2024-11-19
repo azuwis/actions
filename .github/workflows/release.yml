@@ -29,12 +29,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./nix
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
+        if: ${{ inputs.debug }}
         with:
           debug: nopause
       - name: REPL
         uses: actions/github-script@v7
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
+        if: ${{ inputs.debug }}
         with:
           script: |
             const net = require('node:net');

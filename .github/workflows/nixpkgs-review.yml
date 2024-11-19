@@ -52,7 +52,7 @@ jobs:
       - uses: ./nix
         with:
           key: nixpkgs-review
-          debug: ${{ github.event_name == 'workflow_dispatch' && inputs.debug }}
+          debug: ${{ inputs.debug }}
           install_action: ${{ inputs.install_action }}
           clean: ${{ inputs.btrfs }}
           btrfs: ${{ inputs.btrfs }}

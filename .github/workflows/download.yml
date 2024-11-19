@@ -34,6 +34,6 @@ jobs:
       - uses: ./download
       - run: test -e ${{ matrix.os }}.zip
       - uses: ./nix
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug && always() }}
+        if: ${{ inputs.debug && always() }}
         with:
           debug: true
