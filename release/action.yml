@@ -27,7 +27,7 @@ runs:
               repo,
               tag,
             });
-            console.log('Using existing release');
+            console.log('Use existing release');
           } catch (e) {
             console.log('Create new release');
             release = await github.rest.repos.createRelease({
