@@ -70,6 +70,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PULL_REQUEST: ${{ inputs.pr }}
         run: |
+          echo "CURRENT_SYSTEM=$(nix eval --impure --raw --expr builtins.currentSystem)" >>"$GITHUB_ENV"
           git config --global user.name 'github-actions[bot]'
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
           cd nixpkgs
@@ -77,7 +78,7 @@ jobs:
           test -e ~/.cache/nixpkgs-review/*/report.md
       - uses: actions/upload-artifact@v4
         with:
-          name: report-${{ matrix.os }}
+          name: report-${{ env.CURRENT_SYSTEM }}
           path: |
             ~/.cache/nixpkgs-review/
             !~/.cache/nixpkgs-review/*/results/
@@ -96,8 +97,8 @@ jobs:
           PR=${PULL_REQUEST##*/}
 
           generate_logs() {
-            reports=(report-ubuntu-*/*/report.json)
-            reports+=(report-macos-*/*/report.json)
+            reports=(report-*-linux/*/report.json)
+            reports+=(report-*-darwin/*/report.json)
             for report in "${reports[@]}"; do
               system=$(jq -r '.systems[0]' "$report")
               mapfile -t packages < <(jq -r '.result | .[].failed | .[]' "$report")
@@ -131,8 +132,8 @@ jobs:
           }
 
           generate_summary() {
-            reports=(report-ubuntu-*/*/report.md)
-            reports+=(report-macos-*/*/report.md)
+            reports=(report-*-linux/*/report.md)
+            reports+=(report-*-darwin/*/report.md)
             cat "${reports[0]}"
             sed -s -n -e '/---/,$p' -e '1i\
           ' "${reports[@]:1}" 2>/dev/null
