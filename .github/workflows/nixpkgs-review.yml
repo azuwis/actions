@@ -74,7 +74,8 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
           cd nixpkgs
-          nix shell ~/.local/state/nix/profiles/shell --command nixpkgs-review pr --no-shell --print-result "$PULL_REQUEST" || true
+          IFS=' ' read -r -a args <<<"$PULL_REQUEST"
+          nix shell ~/.local/state/nix/profiles/shell --command nixpkgs-review pr --no-shell --print-result "${args[@]}" || true
           test -e ~/.cache/nixpkgs-review/*/report.md
       - uses: actions/upload-artifact@v4
         with:
