@@ -76,6 +76,7 @@ macOS)
     /Library/Developer/CoreSimulator \
     /Users/runner/Library/Developer/CoreSimulator
   # Disable MDS service on macOS
+  sudo mdutil -i off -a || true
   sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist || true
   ;;
 esac
