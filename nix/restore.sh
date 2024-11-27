@@ -17,6 +17,15 @@ init_nix() {
 }
 
 pre() {
+  case "$RUNNER_OS" in
+  macOS)
+    # Disable fseventsd on /nix volume
+    sudo mkdir -p /nix/.fseventsd
+    sudo touch /nix/.fseventsd/no_log
+    sudo sudo pkill -9 fseventsd
+    ;;
+  esac
+
   INSTALL_NIX_CLI_PATH=$(readlink -f "$(command -v nix)")
   echo "Install nix cli path: $INSTALL_NIX_CLI_PATH"
   echo "INSTALL_NIX_CLI_PATH=$INSTALL_NIX_CLI_PATH" >>"$GITHUB_ENV"
