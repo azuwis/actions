@@ -96,6 +96,7 @@ jobs:
           PULL_REQUEST: ${{ inputs.pr }}
         run: |
           PR=${PULL_REQUEST##*/}
+          PR="${PR%% *}"
 
           generate_logs() {
             reports=(report-*-linux/*/report.json)
