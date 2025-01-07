@@ -121,7 +121,7 @@ jobs:
           \`\`\`\`
           \`\`\`
           EOF
-                    tail -n 25 "$log"
+                    tail -n 50 "$log" | sed -e $'s/\x1b\[[0-9;]*m//g'
                     cat <<EOF
           \`\`\`
           \`\`\`\`
