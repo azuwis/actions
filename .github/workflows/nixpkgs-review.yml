@@ -113,7 +113,7 @@ jobs:
           EOF
                 for package in "${packages[@]}"; do
                   log="${report%/*}/logs/${package}-${system}.log"
-                  if [ -e "$log" ]; then
+                  if [ -s "$log" ]; then
                     cat <<EOF
           <details>
             <summary>:x: $package</summary>
