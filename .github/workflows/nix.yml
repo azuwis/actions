@@ -84,7 +84,6 @@ jobs:
           clean: ${{ inputs.btrfs }}
           debug: ${{ inputs.debug }}
           install_action: ${{ matrix.install_action }}
-          key: nix-${{ matrix.install_action }}
       - name: Install tools for debug
         run: |
           nix-env -f '<nixpkgs>' -iA cloudflared tmux
@@ -115,7 +114,6 @@ jobs:
       - uses: ./nix
         with:
           install_action: ${{ matrix.install_action }}
-          key: nix-${{ matrix.install_action }}
       - name: Install tools for debug
         run: |
           nix-env -f '<nixpkgs>' -iA cloudflared tmux
@@ -154,4 +152,3 @@ jobs:
           btrfs: true
           clean: true
           install_action: ${{ matrix.install_action }}
-          key: nix-${{ matrix.install_action }}

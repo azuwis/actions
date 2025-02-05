@@ -51,7 +51,7 @@ runs:
     - name: Nix restore pre
       shell: bash
       env:
-        CACHE_KEY: ${{ inputs.key }}
+        CACHE_KEY: ${{ inputs.key }}-${{ inputs.install_action }}
       run: exec ${{ github.action_path }}/restore.sh pre
     - uses: actions/cache/restore@v4
       with:
