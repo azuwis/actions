@@ -19,7 +19,7 @@ inputs:
     default: true
   nixpkgs_url:
     description: Nixpkgs URL
-    default: https://nixos.org/channels/nixos-24.05
+    default: https://nixos.org/channels/nixos-24.11
   clean:
     description: Clean up disk space
     default: false
