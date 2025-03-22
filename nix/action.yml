@@ -40,11 +40,11 @@ runs:
         CLEAN: ${{ inputs.clean }}
         BTRFS: ${{ inputs.btrfs }}
       run: exec ${{ github.action_path }}/prepare.sh
-    - uses: nixbuild/nix-quick-install-action@v29
+    - uses: nixbuild/nix-quick-install-action@5bb6a3b3abe66fd09bbf250dce8ada94f856a703 # v30
       if: ${{ inputs.install_action == 'nixbuild' }}
       with:
         nix_conf: ${{ inputs.nix_conf }}
-    - uses: cachix/install-nix-action@v30
+    - uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f # v31
       if: ${{ inputs.install_action != 'nixbuild' }}
       with:
         extra_nix_config: ${{ inputs.nix_conf }}
@@ -53,7 +53,7 @@ runs:
       env:
         CACHE_KEY: ${{ inputs.key }}-${{ inputs.install_action }}
       run: exec ${{ github.action_path }}/restore.sh pre
-    - uses: actions/cache/restore@v4
+    - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
         key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CACHE_TIMESTAMP }}
         restore-keys: |

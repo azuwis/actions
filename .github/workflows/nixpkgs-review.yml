@@ -52,7 +52,7 @@ jobs:
           ))))))) }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: ./nix
         with:
           key: nixpkgs-review
@@ -65,7 +65,7 @@ jobs:
           nix-env -f '<nixpkgs>' -iA cloudflared tmux
           nix build --no-link --profile ~/.local/state/nix/profiles/shell github:Mic92/nixpkgs-review
       - uses: ./nix/post
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: NixOS/nixpkgs
           path: nixpkgs
@@ -81,7 +81,7 @@ jobs:
           IFS=' ' read -r -a args <<<"$PULL_REQUEST"
           nix shell ~/.local/state/nix/profiles/shell --command nixpkgs-review pr --no-shell --print-result "${args[@]}" || true
           test -e ~/.cache/nixpkgs-review/*/report.md
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: report-${{ env.CURRENT_SYSTEM }}
           path: |
@@ -94,7 +94,7 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
       - name: Summary
         env:
           PULL_REQUEST: ${{ inputs.pr }}
@@ -159,7 +159,7 @@ jobs:
           EOF
 
           generate_logs >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: report-all
           path: report-*
