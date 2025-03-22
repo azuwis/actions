@@ -24,6 +24,8 @@ on:
         options: 
           - linux
           - darwin
+          - aarch64-linux
+          - x86_64-linux
           - aarch64-darwin
           - x86_64-darwin
           - all
@@ -63,12 +65,14 @@ jobs:
       matrix:
         os: >-
           ${{ fromJSON(
-            inputs.os == 'linux' && '["ubuntu-latest"]' || (
+            inputs.os == 'linux' && '["ubuntu-latest", "ubuntu-24.04-arm"]' || (
             inputs.os == 'darwin' && '["macos-latest", "macos-13"]' || (
+            inputs.os == 'aarch64-linux' && '["ubuntu-24.04-arm"]' || (
+            inputs.os == 'x86_64-linux' && '["ubuntu-latest"]' || (
             inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
             inputs.os == 'x86_64-darwin' && '["macos-13"]' || (
-            '["ubuntu-latest", "macos-latest", "macos-13"]'
-          ))))) }}
+            '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest", "macos-13"]'
+          ))))))) }}
         install_action: >-
           ${{ fromJSON(
             inputs.install_action == 'cachix' && '[ "cachix" ]' || (
@@ -96,12 +100,14 @@ jobs:
       matrix:
         os: >-
           ${{ fromJSON(
-            inputs.os == 'linux' && '["ubuntu-latest"]' || (
+            inputs.os == 'linux' && '["ubuntu-latest", "ubuntu-24.04-arm"]' || (
             inputs.os == 'darwin' && '["macos-latest", "macos-13"]' || (
+            inputs.os == 'aarch64-linux' && '["ubuntu-24.04-arm"]' || (
+            inputs.os == 'x86_64-linux' && '["ubuntu-latest"]' || (
             inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
             inputs.os == 'x86_64-darwin' && '["macos-13"]' || (
-            '["ubuntu-latest", "macos-latest", "macos-13"]'
-          ))))) }}
+            '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest", "macos-13"]'
+          ))))))) }}
         install_action: >-
           ${{ fromJSON(
             inputs.install_action == 'cachix' && '[ "cachix" ]' || (
@@ -132,12 +138,14 @@ jobs:
       matrix:
         os: >-
           ${{ fromJSON(
-            inputs.os == 'linux' && '["ubuntu-latest"]' || (
+            inputs.os == 'linux' && '["ubuntu-latest", "ubuntu-24.04-arm"]' || (
             inputs.os == 'darwin' && '["macos-latest", "macos-13"]' || (
+            inputs.os == 'aarch64-linux' && '["ubuntu-24.04-arm"]' || (
+            inputs.os == 'x86_64-linux' && '["ubuntu-latest"]' || (
             inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
             inputs.os == 'x86_64-darwin' && '["macos-13"]' || (
-            '["ubuntu-latest", "macos-latest", "macos-13"]'
-          ))))) }}
+            '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest", "macos-13"]'
+          ))))))) }}
         install_action: >-
           ${{ fromJSON(
             inputs.install_action == 'cachix' && '[ "cachix" ]' || (
