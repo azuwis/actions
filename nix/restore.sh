@@ -95,7 +95,7 @@ post() {
     esac
   fi
 
-  if [ -e flake.nix ] && [ "$USE_NIXPKGS_IN_FLAKE" = true ]; then
+  if [ -e flake.lock ] && [ "$USE_NIXPKGS_IN_FLAKE" = true ]; then
     nixpkgs=$(jq -r '.nodes.nixpkgs.locked | "\(.type):\(.owner)/\(.repo)/\(.rev)"' flake.lock)
     if [ "$nixpkgs" != "null:null/null/null" ]; then
       echo "Setup nixpkgs in flake.nix to nix registry and NIX_PATH: $nixpkgs"

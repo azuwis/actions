@@ -11,7 +11,7 @@ pre() {
 
   # Create gcroot for flake input nixpkgs to prevent gc,
   # ignore other inputs because flake inputs are lazy.
-  if [ -f flake.nix ]; then
+  if [ -f flake.lock ]; then
     if store_path=$(nix flake archive --json --dry-run | jq -r '.inputs.nixpkgs.path'); then
       rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
       nix build --out-link "/tmp/nixpkgs-$rev" "$store_path"
