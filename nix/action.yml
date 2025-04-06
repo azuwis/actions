@@ -77,5 +77,6 @@ runs:
       if: ${{ inputs.debug == true || inputs.debug == 'true' || inputs.debug == 'nopause' }}
       shell: bash
       env:
+        DEBUG: ${{ inputs.debug }}
         GH_TOKEN: ${{ inputs.debug_token }}
-      run: exec ${{ github.action_path }}/debug.sh "${{ inputs.debug }}"
+      run: exec ${{ github.action_path }}/debug.sh "$DEBUG"
