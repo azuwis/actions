@@ -1,6 +1,5 @@
 name: Release
-permissions:
-  contents: write
+permissions: {}
 on:
   pull_request:
     paths:
@@ -21,6 +20,8 @@ on:
         default: false
 jobs:
   release:
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
