@@ -16,10 +16,14 @@ runs:
     - name: Create release
       id: create_release
       uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      env:
+        INPUTS_DRAFT: ${{ inputs.draft }}
+        INPUTS_PRERELEASE: ${{ inputs.prerelease }}
+        INPUTS_TAG: ${{ inputs.tag }}
       with:
         script: |
           const { owner, repo } = context.repo;
-          const tag = '${{ inputs.tag }}';
+          const tag = process.env.INPUTS_TAG;
           let release
           try {
             release = await github.rest.repos.getReleaseByTag({
@@ -36,8 +40,8 @@ runs:
               name: tag,
               tag_name: tag,
               generate_release_notes: true,
-              draft: ${{ inputs.draft == true || inputs.draft == 'true' }},
-              prerelease: ${{ inputs.prerelease == true || inputs.prerelease == 'true' }},
+              draft: process.env.INPUTS_DRAFT == 'true',
+              prerelease: process.env.INPUTS_PRERELEASE == 'true',
             });
           }
           core.setOutput('release_id', release.data.id);
