@@ -34,6 +34,10 @@ on:
         description: Clean up disk and enable BTRFS RAID0 on Linux to get max disk space
         type: boolean
         default: false
+      shallow:
+        description: Shallow clone nixpkgs
+        type: boolean
+        default: true
 run-name: Nixpkgs Review ${{ inputs.pr }}
 jobs:
   nixpkgs-review:
@@ -72,6 +76,7 @@ jobs:
           persist-credentials: false
           repository: NixOS/nixpkgs
           path: nixpkgs
+          fetch-depth: ${{ inputs.shallow && 1 || 0 }}
       - name: Run nixpkgs-review pr ${{ inputs.pr }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
