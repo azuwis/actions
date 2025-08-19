@@ -21,7 +21,7 @@ on:
         type: choice
         options: 
           - latest
-          - "2019"
+          - "2025"
           - all
         default: all
 jobs:
@@ -32,8 +32,8 @@ jobs:
         os: >-
           ${{ fromJSON(
             inputs.os == 'latest' && '["windows-latest"]' || (
-            inputs.os == '2019' && '["windows-2019"]' || (
-            '["windows-latest", "windows-2019"]'
+            inputs.os == '2025' && '["windows-2025"]' || (
+            '["windows-latest", "windows-2025"]'
           ))) }}
     runs-on: ${{ matrix.os }}
     steps:
