@@ -15,7 +15,7 @@ runs:
   steps:
     - name: Create release
       id: create_release
-      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
       env:
         INPUTS_DRAFT: ${{ inputs.draft }}
         INPUTS_PRERELEASE: ${{ inputs.prerelease }}
@@ -46,7 +46,7 @@ runs:
           }
           core.setOutput('release_id', release.data.id);
     - name: Upload assets
-      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
       if: ${{ inputs.files }}
       env:
         FILES: ${{ inputs.files }}
