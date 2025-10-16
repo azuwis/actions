@@ -44,7 +44,7 @@ runs:
       if: ${{ inputs.install_action == 'nixbuild' }}
       with:
         nix_conf: ${{ inputs.nix_conf }}
-    - uses: cachix/install-nix-action@7be5dee1421f63d07e71ce6e0a9f8a4b07c2a487 # v31
+    - uses: cachix/install-nix-action@7ab6e7fd29da88e74b1e314a4ae9ac6b5cda3801 # v31
       if: ${{ inputs.install_action != 'nixbuild' }}
       with:
         extra_nix_config: ${{ inputs.nix_conf }}
