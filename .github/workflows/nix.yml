@@ -1,5 +1,8 @@
 name: Nix
 permissions: {}
+concurrency:
+  # Concurrency is not possible because of clear_cache and nix_with_cache
+  group: nix
 on:
   pull_request:
     paths:
