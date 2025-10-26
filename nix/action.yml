@@ -13,7 +13,7 @@ inputs:
     default: nix
   install_action:
     description: Set `nixbuild` to use nixbuild/nix-quick-install-action, otherwide use cachix/install-nix-action
-    default: nixbuild
+    default: cachix
   use_nixpkgs_in_flake:
     description: Use nixpkgs defined in flake.nix
     default: true
