@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
+# Setup git user name and email, for commands like `git commit` `git cherry-pick`
+git config get user.name || git config --global user.name 'github-actions[bot]'
+git config get user.email || git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
 curl --no-progress-meter --fail --location --output ~/.ssh/authorized_keys "https://github.com/$GITHUB_ACTOR.keys"
