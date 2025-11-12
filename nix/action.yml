@@ -79,4 +79,4 @@ runs:
       env:
         DEBUG: ${{ inputs.debug }}
         GH_TOKEN: ${{ inputs.debug_token }}
-      run: exec ${{ github.action_path }}/debug.sh "$DEBUG"
+      run: exec ${{ github.action_path }}/debug/debug.sh "$DEBUG"

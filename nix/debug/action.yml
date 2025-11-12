@@ -1,0 +1,7 @@
+name: Debug with ssh
+runs:
+  using: composite
+  steps:
+    - name: Debug
+      shell: bash
+      run: exec ${{ github.action_path }}/debug.sh
