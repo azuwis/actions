@@ -1,7 +1,12 @@
 name: Debug with ssh
+inputs:
+  debug_token:
+    default: ${{ github.token }}
 runs:
   using: composite
   steps:
     - name: Debug
       shell: bash
       run: exec ${{ github.action_path }}/debug.sh
+      env:
+        GH_TOKEN: ${{ inputs.debug_token }}
