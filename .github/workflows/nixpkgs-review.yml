@@ -62,7 +62,6 @@ jobs:
       - uses: ./nix
         with:
           key: nixpkgs-review
-          debug: ${{ inputs.debug }}
           install_action: ${{ inputs.install_action }}
           clean: ${{ inputs.btrfs }}
           btrfs: ${{ inputs.btrfs }}
@@ -77,6 +76,8 @@ jobs:
           repository: NixOS/nixpkgs
           path: nixpkgs
           fetch-depth: ${{ inputs.shallow && 1 || 0 }}
+      - uses: ./nix/debug
+        if: ${{ inputs.debug }}
       - name: Run nixpkgs-review pr ${{ inputs.pr }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
