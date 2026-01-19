@@ -53,7 +53,7 @@ runs:
       env:
         CACHE_KEY: ${{ inputs.key }}-${{ inputs.install_action }}
       run: exec ${{ github.action_path }}/restore.sh pre
-    - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+    - uses: actions/cache/restore@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
       with:
         key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CACHE_TIMESTAMP }}
         restore-keys: |
