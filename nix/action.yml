@@ -4,7 +4,6 @@ inputs:
     description: Extra nix.conf config
     default: |
       accept-flake-config = true
-      build-dir = /nix/var
       experimental-features = nix-command flakes
       keep-derivations = true
       keep-outputs = true
