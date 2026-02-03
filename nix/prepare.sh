@@ -34,24 +34,30 @@ Linux)
   fi
   df -h -x tmpfs
   echo
-  root_free=$(df --block-size=1 --output=avail / | sed -n 2p)
-  mnt_free=$(df --block-size=1 --output=avail /mnt | sed -n 2p)
+  disks=()
+  disks_free=()
+  while read -r free target; do
+    disks+=("$target")
+    disks_free+=("$free")
+  done < <(df --block-size=1 --output=avail,target | sort -rn | awk '$1 ~ /^[0-9]+$/ && $1 > 20*1024*1024*1024 {print $1, $2}')
   if [ "$BTRFS" = true ]; then
-    echo "Make /nix BTRFS RAID0 from /btrfs and /mnt/btrfs"
-    sudo touch /btrfs /mnt/btrfs
-    sudo chmod 600 /btrfs /mnt/btrfs
-    sudo fallocate --zero-range --length "$((root_free - 2147483648))" /btrfs
-    sudo fallocate --zero-range --length "$mnt_free" /mnt/btrfs
-    sudo losetup /dev/loop6 /btrfs
-    sudo losetup /dev/loop7 /mnt/btrfs
-    sudo mkfs.btrfs --data raid0 /dev/loop6 /dev/loop7
+    echo "Make /nix BTRFS RAID0 from ${disks[*]}"
+    loops=()
+    for i in "${!disks[@]}"; do
+      sudo touch "${disks[$i]}/btrfs"
+      sudo chmod 600 "${disks[$i]}/btrfs"
+      sudo fallocate --zero-range --length "$((${disks_free[$i]} - 2 * 1024 * 1024 * 1024))" /btrfs
+      sudo losetup "/dev/loop$i" /btrfs
+      loops+=("/dev/loop$i")
+    done
+    sudo mkfs.btrfs --data raid0 "${loops[@]}"
     sudo mkdir /nix
-    sudo mount -t btrfs -o compress=zstd /dev/loop6 /nix
+    sudo mount -t btrfs -o compress=zstd /dev/loop0 /nix
     sudo chown "${USER}:" /nix
-  elif [ "$mnt_free" -gt 20000000000 ]; then
-    echo "/mnt is large, bind mount /mnt/nix"
-    sudo install -d -o "$USER" /mnt/nix /nix
-    sudo mount --bind /mnt/nix /nix
+  elif [ "${disks[0]}" != "/" ]; then
+    echo "${disks[0]} is the largest free disk, create ${disks[0]}/nix and bind mount to /nix"
+    sudo install -d -o "$USER" "${disks[0]}/nix" /nix
+    sudo mount --bind "${disks[0]}/nix" /nix
   fi
   ;;
 macOS)
