@@ -46,8 +46,8 @@ Linux)
     for i in "${!disks[@]}"; do
       sudo touch "${disks[$i]}/btrfs"
       sudo chmod 600 "${disks[$i]}/btrfs"
-      sudo fallocate --zero-range --length "$((${disks_free[$i]} - 2 * 1024 * 1024 * 1024))" /btrfs
-      sudo losetup "/dev/loop$i" /btrfs
+      sudo fallocate --zero-range --length "$((${disks_free[$i]} - 2 * 1024 * 1024 * 1024))" "${disks[$i]}/btrfs"
+      sudo losetup "/dev/loop$i" "${disks[$i]}/btrfs"
       loops+=("/dev/loop$i")
     done
     sudo mkfs.btrfs --data raid0 "${loops[@]}"
