@@ -43,7 +43,7 @@ runs:
       if: ${{ inputs.install_action == 'nixbuild' }}
       with:
         nix_conf: ${{ inputs.nix_conf }}
-    - uses: cachix/install-nix-action@4e002c8ec80594ecd40e759629461e26c8abed15 # v31.9.0
+    - uses: cachix/install-nix-action@2126ae7fc54c9df00dd18f7f18754393182c73cd # v31.9.1
       if: ${{ inputs.install_action != 'nixbuild' }}
       with:
         extra_nix_config: ${{ inputs.nix_conf }}
@@ -52,7 +52,7 @@ runs:
       env:
         CACHE_KEY: ${{ inputs.key }}-${{ inputs.install_action }}
       run: exec ${{ github.action_path }}/restore.sh pre
-    - uses: actions/cache/restore@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
+    - uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
       with:
         key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CACHE_TIMESTAMP }}
         restore-keys: |
