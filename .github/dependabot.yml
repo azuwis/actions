@@ -5,7 +5,6 @@ updates:
     # Need to list every dirs containing the composite `action.yml` file
     directories:
       - /
-      - /download
       - /nix
       - /release
     schedule:
