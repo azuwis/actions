@@ -5,6 +5,7 @@ inputs:
     default: |
       accept-flake-config = true
       experimental-features = nix-command flakes
+      http2 = false
       keep-derivations = true
       keep-outputs = true
   key:
