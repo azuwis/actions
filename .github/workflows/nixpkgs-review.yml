@@ -44,16 +44,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: >-
+        system: >-
           ${{ fromJSON(
-            inputs.os == 'linux' && '["ubuntu-latest", "ubuntu-24.04-arm"]' || (
-            inputs.os == 'darwin' && '["macos-latest", "macos-15-intel"]' || (
-            inputs.os == 'aarch64-linux' && '["ubuntu-24.04-arm"]' || (
-            inputs.os == 'x86_64-linux' && '["ubuntu-latest"]' || (
-            inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
-            inputs.os == 'x86_64-darwin' && '["macos-15-intel"]' || (
-            '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest", "macos-15-intel"]'
+            inputs.os == 'linux' && '["x86_64-linux", "aarch64-linux"]' || (
+            inputs.os == 'darwin' && '["aarch64-darwin", "x86_64-darwin"]' || (
+            inputs.os == 'aarch64-linux' && '["aarch64-linux"]' || (
+            inputs.os == 'x86_64-linux' && '["x86_64-linux"]' || (
+            inputs.os == 'aarch64-darwin' && '["aarch64-darwin"]' || (
+            inputs.os == 'x86_64-darwin' && '["x86_64-darwin"]' || (
+            '["x86_64-linux", "aarch64-linux", "aarch64-darwin", "x86_64-darwin"]'
           ))))))) }}
+        include:
+          - system: x86_64-linux
+            os: ubuntu-latest
+          - system: aarch64-linux
+            os: ubuntu-24.04-arm
+          - system: aarch64-darwin
+            os: macos-latest
+          - system: x86_64-darwin
+            os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -65,6 +74,7 @@ jobs:
           install_action: ${{ inputs.install_action }}
           clean: ${{ inputs.btrfs }}
           btrfs: ${{ inputs.btrfs }}
+          system: ${{ matrix.system }}
       - name: Install tools
         run: |
           nix-env -f '<nixpkgs>' -iA cloudflared nixpkgs-review tmux
