@@ -82,7 +82,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PULL_REQUEST: ${{ inputs.pr }}
         run: |
-          echo "CURRENT_SYSTEM=$(nix eval --impure --raw --expr builtins.currentSystem)" >>"$GITHUB_ENV"
           git config --global user.name 'github-actions[bot]'
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
           cd nixpkgs

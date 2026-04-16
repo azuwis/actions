@@ -62,9 +62,9 @@ runs:
       run: exec ${{ github.action_path }}/restore.sh pre
     - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
-        key: ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CACHE_TIMESTAMP }}
+        key: ${{ env.CACHE_KEY }}-${{ env.CURRENT_SYSTEM }}-${{ env.CACHE_TIMESTAMP }}
         restore-keys: |
-          ${{ env.CACHE_KEY }}-${{ runner.os }}-${{ runner.arch }}
+          ${{ env.CACHE_KEY }}-${{ env.CURRENT_SYSTEM }}
         path: |
           /nix/store
           /nix/var/nix/db

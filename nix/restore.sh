@@ -17,6 +17,12 @@ init_nix() {
 }
 
 pre() {
+  cat <<EOF >>"$GITHUB_ENV"
+CACHE_KEY=$CACHE_KEY
+CACHE_TIMESTAMP=$(date +%Y%m%d%H%M%S)
+CURRENT_SYSTEM=$(nix eval --impure --raw --expr builtins.currentSystem)
+EOF
+
   case "$RUNNER_OS" in
   macOS)
     # Disable fseventsd on /nix volume
@@ -50,9 +56,6 @@ pre() {
       sudo mv -v "$path" "$path.bak"
     fi
   done
-
-  echo "CACHE_KEY=$CACHE_KEY" >>"$GITHUB_ENV"
-  echo "CACHE_TIMESTAMP=$(date +%Y%m%d%H%M%S)" >>"$GITHUB_ENV"
 }
 
 post() {
