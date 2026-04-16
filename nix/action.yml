@@ -1,13 +1,16 @@
 name: Install Nix and setup cache
 inputs:
   nix_conf:
-    description: Extra nix.conf config
+    description: nix.conf config
     default: |
       accept-flake-config = true
       experimental-features = nix-command flakes
       http2 = false
       keep-derivations = true
       keep-outputs = true
+  extra_nix_conf:
+    description: Extra nix.conf config, appended to nix_conf
+    default: ""
   key:
     description: Key to actions/cache
     default: nix
@@ -43,11 +46,15 @@ runs:
     - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
       if: ${{ inputs.install_action == 'nixbuild' }}
       with:
-        nix_conf: ${{ inputs.nix_conf }}
+        nix_conf: |
+          ${{ inputs.nix_conf }}
+          ${{ inputs.extra_nix_conf }}
     - uses: cachix/install-nix-action@616559265b40713947b9c190a8ff4b507b5df49b # v31.10.4
       if: ${{ inputs.install_action != 'nixbuild' }}
       with:
-        extra_nix_config: ${{ inputs.nix_conf }}
+        extra_nix_config: |
+          ${{ inputs.nix_conf }}
+          ${{ inputs.extra_nix_conf }}
     - name: Nix restore pre
       shell: bash
       env:
