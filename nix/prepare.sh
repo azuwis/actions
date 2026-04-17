@@ -59,6 +59,10 @@ Linux)
     sudo install -d -o "$USER" "${disks[0]}/nix" /nix
     sudo mount --bind "${disks[0]}/nix" /nix
   fi
+  # Disable AppArmor unprivileged user namespace restriction, without this,
+  # packages like `fence` fail to build due to test error: `bwrap: setting up
+  # uid map: Permission denied`
+  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
   ;;
 macOS)
   if [ "$CLEAN" = true ]; then
