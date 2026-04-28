@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -eo pipefail
 
 case "$RUNNER_OS" in
 Linux)
@@ -28,7 +29,7 @@ Linux)
       /usr/share/dotnet \
       /usr/share/miniconda \
       /usr/share/swift
-    docker image prune --all --force >/dev/null
+    docker image prune --all --force >/dev/null || true
     echo
     echo "After:"
   fi
@@ -47,12 +48,12 @@ Linux)
       sudo touch "${disks[$i]}/btrfs"
       sudo chmod 600 "${disks[$i]}/btrfs"
       sudo fallocate --zero-range --length "$((${disks_free[$i]} - 2 * 1024 * 1024 * 1024))" "${disks[$i]}/btrfs"
-      sudo losetup "/dev/loop$i" "${disks[$i]}/btrfs"
-      loops+=("/dev/loop$i")
+      loop_dev=$(sudo losetup --find --show "${disks[$i]}/btrfs")
+      loops+=("$loop_dev")
     done
     sudo mkfs.btrfs --data raid0 "${loops[@]}"
     sudo mkdir /nix
-    sudo mount -t btrfs -o compress=zstd /dev/loop0 /nix
+    sudo mount -t btrfs -o compress=zstd "${loops[0]}" /nix
     sudo chown "${USER}:" /nix
   elif [ "${disks[0]}" != "/" ]; then
     echo "${disks[0]} is the largest free disk, create ${disks[0]}/nix and bind mount to /nix"
