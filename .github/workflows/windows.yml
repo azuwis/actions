@@ -51,7 +51,18 @@ jobs:
         run: |
           curl -f -L -o ../cloudflared.exe https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
           ../cloudflared.exe tunnel --no-autoupdate --url tcp://127.0.0.1:3389 >& /tmp/cloudflared.log &
-          url=$(until grep -o -m1 '[a-z-]*\.trycloudflare\.com' /tmp/cloudflared.log; do sleep 2; done)
+          url=""
+          for i in $(seq 60); do
+            if url=$(grep -o -m1 '[a-z-]*\.trycloudflare\.com' /tmp/cloudflared.log 2>/dev/null); then
+              break
+            fi
+            sleep 2
+          done
+          if [ -z "$url" ]; then
+            echo "Timeout waiting for cloudflared URL"
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_ENV"
 
           cat /tmp/cloudflared.log
           echo
