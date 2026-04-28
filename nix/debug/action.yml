@@ -1,6 +1,7 @@
 name: Debug with ssh
 inputs:
   debug_token:
+    description: GitHub token for gh CLI
     default: ${{ github.token }}
 runs:
   using: composite

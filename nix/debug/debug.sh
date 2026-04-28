@@ -35,7 +35,17 @@ done
 nix-env -f '<nixpkgs>' -iA cloudflared tmux
 
 cloudflared tunnel --no-autoupdate --url tcp://127.0.0.1:3456 >&/tmp/cloudflared.log &
-url=$(until grep -o -m1 '[a-z-]*\.trycloudflare\.com' /tmp/cloudflared.log; do sleep 2; done)
+url=""
+for i in $(seq 60); do
+  if url=$(grep -o -m1 '[a-z-]*\.trycloudflare\.com' /tmp/cloudflared.log 2>/dev/null); then
+    break
+  fi
+  sleep 2
+done
+if [ -z "$url" ]; then
+  echo "Timeout waiting for cloudflared URL"
+  exit 1
+fi
 cat /tmp/cloudflared.log
 cat <<'EOF'
 
