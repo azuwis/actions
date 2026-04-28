@@ -7,8 +7,10 @@ inputs:
     description: Tag to create release from
     default: ${{ github.ref_name }}
   draft:
+    description: Create release as draft
     default: false
   prerelease:
+    description: Mark release as prerelease
     default: false
 runs:
   using: composite
@@ -58,21 +60,21 @@ runs:
           const release_id = ${{ steps.create_release.outputs.release_id }};
           const files = await glob.create(process.env.FILES).then(globber => globber.glob())
             .then(files => files.filter(file => fs.lstatSync(file).isFile()));
-          await github.rest.repos.listReleaseAssets({
+          const assets = await github.rest.repos.listReleaseAssets({
             owner,
             repo,
             release_id,
-          }).then(resp => {
-            const basenames = files.map(file => path.basename(file));
-            resp.data.filter(asset => basenames.includes(asset.name)).forEach(asset => {
-              console.log('Delete', asset.name);
-              github.rest.repos.deleteReleaseAsset({
-                owner,
-                repo,
-                asset_id: asset.id,
-              });
-            });
           });
+          const basenames = files.map(file => path.basename(file));
+          const toDelete = assets.data.filter(asset => basenames.includes(asset.name));
+          await Promise.all(toDelete.map(asset => {
+            console.log('Delete', asset.name);
+            return github.rest.repos.deleteReleaseAsset({
+              owner,
+              repo,
+              asset_id: asset.id,
+            });
+          }));
           for (const file of files) {
             console.log('Upload', file);
             const name = path.basename(file);
