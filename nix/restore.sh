@@ -28,7 +28,7 @@ EOF
     # Disable fseventsd on /nix volume
     sudo mkdir -p /nix/.fseventsd
     sudo touch /nix/.fseventsd/no_log
-    sudo sudo pkill -9 fseventsd
+    sudo pkill -9 fseventsd || true
     ;;
   esac
 
