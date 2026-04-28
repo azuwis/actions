@@ -14,7 +14,9 @@ pre() {
   if [ -f flake.lock ]; then
     if store_path=$(nix flake archive --json --dry-run | jq -r '.inputs.nixpkgs.path'); then
       rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
-      nix build --out-link "/tmp/nixpkgs-$rev" "$store_path"
+      if [ "$rev" != null ]; then
+        nix build --out-link "/tmp/nixpkgs-$rev" "$store_path"
+      fi
     fi
   fi
 
