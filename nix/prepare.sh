@@ -66,6 +66,13 @@ Linux)
   sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
   ;;
 macOS)
+  # This save about 110G disk space, and take about 0.6s
+  sudo rm -rf \
+    /Library/Developer/CoreSimulator \
+    /Users/runner/Library/Developer/CoreSimulator || true
+  # Disable MDS service on macOS
+  sudo mdutil -i off -a || true
+  sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist || true
   if [ "$CLEAN" = true ]; then
     echo "Disk clean, before:"
     df -h /
@@ -78,17 +85,10 @@ macOS)
       /Users/runner/Library/Android \
       /Users/runner/Library/Caches \
       /Users/runner/Library/Developer/CoreSimulator \
-      /Users/runner/hostedtoolcache
+      /Users/runner/hostedtoolcache || true
     echo
     echo "After:"
     df -h /
   fi
-  # This save about 110G disk space, and take about 0.6s
-  sudo rm -rf \
-    /Library/Developer/CoreSimulator \
-    /Users/runner/Library/Developer/CoreSimulator
-  # Disable MDS service on macOS
-  sudo mdutil -i off -a || true
-  sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist || true
   ;;
 esac
