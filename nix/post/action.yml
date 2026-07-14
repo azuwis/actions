@@ -5,7 +5,7 @@ runs:
     - name: Nix save pre
       shell: bash
       run: exec ${{ github.action_path }}/save.sh pre
-    - uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+    - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       if: ${{ env.CACHE_NEED_UPDATE == 'yes' }}
       with:
         key: ${{ env.CACHE_KEY }}-${{ env.CURRENT_SYSTEM }}-${{ env.CACHE_TIMESTAMP }}
