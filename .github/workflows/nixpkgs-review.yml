@@ -16,7 +16,6 @@ on:
           - aarch64-linux
           - x86_64-linux
           - aarch64-darwin
-          - x86_64-darwin
           - all
         default: all
       pr:
@@ -47,13 +46,12 @@ jobs:
         os: >-
           ${{ fromJSON(
             inputs.os == 'linux' && '["ubuntu-latest", "ubuntu-24.04-arm"]' || (
-            inputs.os == 'darwin' && '["macos-latest", "macos-15-intel"]' || (
+            inputs.os == 'darwin' && '["macos-latest"]' || (
             inputs.os == 'aarch64-linux' && '["ubuntu-24.04-arm"]' || (
             inputs.os == 'x86_64-linux' && '["ubuntu-latest"]' || (
             inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
-            inputs.os == 'x86_64-darwin' && '["macos-15-intel"]' || (
-            '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest", "macos-15-intel"]'
-          ))))))) }}
+            '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest"]'
+          )))))) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
