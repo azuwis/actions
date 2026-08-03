@@ -15,7 +15,7 @@ inputs:
     description: Key to actions/cache
     default: nix
   install_action:
-    description: Set `nixbuild` to use nixbuild/nix-quick-install-action, otherwide use cachix/install-nix-action
+    description: Set `nixbuild` to use nixbuild/nix-quick-install-action, `nixos` to use NixOS/nix-installer-action `cachix` to use cachix/install-nix-action
     default: cachix
   use_nixpkgs_in_flake:
     description: Use nixpkgs defined in flake.nix
@@ -49,8 +49,14 @@ runs:
         nix_conf: |
           ${{ inputs.nix_conf }}
           ${{ inputs.extra_nix_conf }}
+    - uses: NixOS/nix-installer-action@62c1943b776c509394b550f3f983adc14e9212d6 # v1.0.0
+      if: ${{ inputs.install_action == 'nixos' }}
+      with:
+        extra-conf: |
+          ${{ inputs.nix_conf }}
+          ${{ inputs.extra_nix_conf }}
     - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
-      if: ${{ inputs.install_action != 'nixbuild' }}
+      if: ${{ inputs.install_action == 'cachix' }}
       with:
         extra_nix_config: |
           ${{ inputs.nix_conf }}

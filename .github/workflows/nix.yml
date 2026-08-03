@@ -38,6 +38,7 @@ on:
         options: 
           - cachix
           - nixbuild
+          - nixos
           - all
         default: nixbuild
       btrfs:
@@ -82,8 +83,9 @@ jobs:
           ${{ fromJSON(
             inputs.install_action == 'cachix' && '[ "cachix" ]' || (
             inputs.install_action == 'nixbuild' && '[ "nixbuild" ]' || (
-            '[ "cachix", "nixbuild" ]'
-          ))) }}
+            inputs.install_action == 'nixos' && '[ "nixos" ]' || (
+            '[ "cachix", "nixbuild", "nixos" ]'
+          )))) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,8 +121,9 @@ jobs:
           ${{ fromJSON(
             inputs.install_action == 'cachix' && '[ "cachix" ]' || (
             inputs.install_action == 'nixbuild' && '[ "nixbuild" ]' || (
-            '[ "cachix", "nixbuild" ]'
-          ))) }}
+            inputs.install_action == 'nixos' && '[ "nixos" ]' || (
+            '[ "cachix", "nixbuild", "nixos" ]'
+          )))) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -155,8 +158,9 @@ jobs:
           ${{ fromJSON(
             inputs.install_action == 'cachix' && '[ "cachix" ]' || (
             inputs.install_action == 'nixbuild' && '[ "nixbuild" ]' || (
-            '[ "cachix", "nixbuild" ]'
-          ))) }}
+            inputs.install_action == 'nixos' && '[ "nixos" ]' || (
+            '[ "cachix", "nixbuild", "nixos" ]'
+          )))) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
