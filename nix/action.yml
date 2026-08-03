@@ -42,6 +42,7 @@ runs:
       env:
         CLEAN: ${{ inputs.clean }}
         BTRFS: ${{ inputs.btrfs }}
+        INSTALL_ACTION: ${{ inputs.install_action }}
       run: exec ${{ github.action_path }}/prepare.sh
     - uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
       if: ${{ inputs.install_action == 'nixbuild' }}

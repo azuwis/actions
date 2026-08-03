@@ -54,11 +54,15 @@ Linux)
     sudo mkfs.btrfs --data raid0 "${loops[@]}"
     sudo mkdir /nix
     sudo mount -t btrfs -o compress=zstd "${loops[0]}" /nix
-    sudo chown "${USER}:" /nix
   elif [ "${disks[0]}" != "/" ]; then
     echo "${disks[0]} is the largest free disk, create ${disks[0]}/nix and bind mount to /nix"
-    sudo install -d -o "$USER" "${disks[0]}/nix" /nix
+    sudo mkdir -p "${disks[0]}/nix" /nix
     sudo mount --bind "${disks[0]}/nix" /nix
+  fi
+  # Workaround for nixbuild/nix-quick-install-action, it fails to run if /nix
+  # exists but is not writeable
+  if [ "$INSTALL_ACTION" = nixbuild ] && [ -e /nix ]; then
+    sudo chown "${USER}:" /nix
   fi
   # Disable AppArmor unprivileged user namespace restriction, without this,
   # packages like `fence` fail to build due to test error: `bwrap: setting up
