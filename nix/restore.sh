@@ -29,6 +29,9 @@ EOF
     sudo mkdir -p /nix/.fseventsd
     sudo touch /nix/.fseventsd/no_log
     sudo pkill -9 fseventsd || true
+    # Hide /nix from Finder and Spotlight
+    sudo touch /nix/.metadata_never_index
+    sudo chflags hidden /nix
     ;;
   esac
 
