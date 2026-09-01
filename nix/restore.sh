@@ -44,8 +44,8 @@ EOF
 
     echo "Stop nix-daemon"
     case "$RUNNER_OS" in
-    Linux) sudo systemctl stop nix-daemon || true ;;
-    macOS) sudo launchctl unload /Library/LaunchDaemons/org.nixos.nix-daemon.plist || true ;;
+    Linux) sudo systemctl stop nix-daemon ;;
+    macOS) sudo launchctl unload /Library/LaunchDaemons/org.nixos.nix-daemon.plist ;;
     esac
 
     echo "Make the parent dir of cache_paths owner to $USER, for actions/cache/restore to have permissions"
@@ -92,13 +92,20 @@ post() {
 
     echo "Start nix-daemon"
     case "$RUNNER_OS" in
-    Linux) sudo systemctl start nix-daemon || true ;;
+    Linux) sudo systemctl start nix-daemon ;;
     macOS)
       echo "Enable 'sandbox = relaxed' on macOS, so preinstalled apps will not affect builds"
       echo "sandbox = relaxed" | sudo tee -a /etc/nix/nix.conf
-      sudo launchctl load -w /Library/LaunchDaemons/org.nixos.nix-daemon.plist || true
+      sudo launchctl load -w /Library/LaunchDaemons/org.nixos.nix-daemon.plist
       ;;
     esac
+
+    probe_path=$(readlink -f "$(command -v nix)")
+    for _ in $(seq 1 30); do
+      nix-store --store daemon --query --hash "$probe_path" >/dev/null 2>&1 && break
+      echo "Waiting for nix-daemon"
+      sleep 1
+    done
   fi
 
   if [ -e flake.lock ] && [ "$USE_NIXPKGS_IN_FLAKE" = true ]; then
