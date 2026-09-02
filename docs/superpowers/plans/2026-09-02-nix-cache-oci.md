@@ -682,7 +682,7 @@ if [ -n "$PATHS_INPUT" ]; then
   done
   # 展开闭包（spec 要求 --recursive）；macOS 无 xargs -a → stdin 重定向；
   # POSIX sh -c（禁 bashism）；-- 结束选项解析
-  xargs -n 64 sh -c 'nix path-info --recursive --json --json-format 1 -- "$@" 2>/dev/null | jq -r "if type==\"array\" then .[] else to_entries|map({path:.key}+.value) end | .[] | .path"' _ <"$CAND" \
+  PLACEHOLDER
     | sort -u >"$CAND.closure" 2>/dev/null || true
   if [ -s "$CAND.closure" ]; then
     mv "$CAND.closure" "$CAND"
@@ -710,7 +710,7 @@ fi
 # ---- 5. path-info (with signatures) -> TSV, then filter ----
 PIN="$WORK_DIR/pathinfo.tsv"
 : >"$PIN"
-xargs -n 128 sh -c 'nix path-info --json --json-format 1 -- "$@" 2>/dev/null | jq -r '\''if type=="array" then .[] else to_entries|map({path:.key}+.value) end | .[] | [.path, ((.signatures // []) | join(" "))] | @tsv'\''' _ <"$CAND" >>"$PIN" 2>/dev/null || true
+xargs -n 128 sh -c 'nix path-info --json --json-format 1 -- "$@" 2>/dev/null | jq -r '\''if type=="array" then . else to_entries|map({path:.key}+.value) end | .[] | [.path, ((.signatures // []) | join(" "))] | @tsv'\''' _ <"$CAND" >>"$PIN" 2>/dev/null || true
 
 python3 - "$PIN" "$IDX_FILE" "$OWN_KEY_NAME" >"$WORK_DIR/upload-paths" <<'PY'
 import json
