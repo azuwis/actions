@@ -171,3 +171,134 @@ jobs:
           btrfs: true
           clean: true
           install_action: ${{ matrix.install_action }}
+  nix_cache:
+    # fork guard：fork PR 的 token 只读，push 必失败；跳过（同 nix 模式的
+    # always()/needs 结构，但 fork PR 不跑 push 相关断言）
+    if: ${{ always() && !failure() && !cancelled()
+          && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    needs: clear_cache
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Unit tests
+        run: python3 -m unittest discover -s nix/cache/tests -v
+      - uses: ./nix
+        with:
+          install_action: cachix
+      - uses: ./nix/cache
+      - name: Write test flake
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-flake"
+          cat > "$RUNNER_TEMP/ci-flake/flake.nix" <<'EOF'
+          {
+            # 钉 rev：移动分支会在两次 job 之间漂移，导致 leaf 路径不一致
+            inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05?rev=5dfba6236110080a54247d6460bc2ff5dda939cc";
+            outputs = { self, nixpkgs }: {
+              packages.x86_64-linux.cache-test = nixpkgs.legacyPackages.x86_64-linux.stdenv.mkDerivation {
+                pname = "cache-test";
+                version = "1";
+                buildCommand = "mkdir -p $out && echo hello > $out/hello";
+              };
+            };
+          }
+          EOF
+      - name: Build and capture leaf path
+        run: |
+          cd "$RUNNER_TEMP/ci-flake"
+          # stdout 只有 out-path（计划信息走 stderr），无管道 → 无 pipefail 问题
+          leaf="$(nix build .#cache-test --no-link --print-out-paths)"
+          echo "leaf=$leaf"
+          echo "LEAF_PATH=$leaf" >> "$GITHUB_ENV"
+      - name: Push leaf to GHCR cache
+        uses: ./nix/cache/post
+        with:
+          paths: ${{ env.LEAF_PATH }}
+      - name: Assert cache-index contains leaf
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          leaf="$LEAF_PATH"
+          hash="$(basename "$leaf" | cut -c1-32)"
+          repo="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          token="$(curl -fsSL -u "token:${GH_TOKEN}" \
+            "https://ghcr.io/token?scope=repository:${repo}/nix-cache:pull&service=ghcr.io" \
+            | jq -r '.token')"
+          ok=""
+          for _ in $(seq 1 30); do
+            manifest="$(curl -fsSL -H "Authorization: Bearer $token" \
+              -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+              "https://ghcr.io/v2/${repo}/nix-cache/manifests/cache-index" 2>/dev/null || true)"
+            idx_digest="$(printf '%s' "$manifest" | jq -r '.layers[0].digest // empty')"
+            if [ -n "$idx_digest" ]; then
+              entries="$(curl -fsSL -H "Authorization: Bearer $token" \
+                "https://ghcr.io/v2/${repo}/nix-cache/blobs/$idx_digest" 2>/dev/null | jq -r '.entries | keys[]' || true)"
+              if printf '%s\n' "$entries" | grep -qx "$hash"; then ok=1; break; fi
+            fi
+            sleep 2
+          done
+          [ -n "$ok" ] || { echo "leaf $hash not found in cache-index"; exit 1; }
+  nix_cache_with_cache:
+    if: ${{ always() && !failure() && !cancelled()
+          && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    needs: nix_cache
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./nix
+        with:
+          install_action: cachix
+      - uses: ./nix/cache
+      - name: Write test flake
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-flake"
+          cat > "$RUNNER_TEMP/ci-flake/flake.nix" <<'EOF'
+          {
+            inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05?rev=5dfba6236110080a54247d6460bc2ff5dda939cc";
+            outputs = { self, nixpkgs }: {
+              packages.x86_64-linux.cache-test = nixpkgs.legacyPackages.x86_64-linux.stdenv.mkDerivation {
+                pname = "cache-test";
+                version = "1";
+                buildCommand = "mkdir -p $out && echo hello > $out/hello";
+              };
+            };
+          }
+          EOF
+      - name: Ensure leaf is not in store, then substitute from OCI cache
+        run: |
+          cd "$RUNNER_TEMP/ci-flake"
+          # eval --raw 只算路径不构建（nix path-info 在路径不在 store 时会直接失败）
+          leaf="$(nix eval --raw .#cache-test.outPath)"
+          hash="$(basename "$leaf" | cut -c1-32)"
+          # 无缓存时可删除（delete 失败=不存在，正常）
+          nix store delete "$leaf" 2>/dev/null || true
+          port="${NIXCACHE_PORT:-}"
+          [ -n "$port" ] || { echo "no cache substituter configured (NIXCACHE_PORT empty)"; exit 1; }
+          # 强制代理刷新索引（防冷启动索引未拉完 / TTL）；等 entries > 0
+          curl -fsS -X POST "http://127.0.0.1:$port/_refresh" 2>/dev/null || true
+          for _ in $(seq 1 20); do
+            n="$(curl -fsS "http://127.0.0.1:$port/_status" 2>/dev/null | jq -r '.index_entries // 0' || true)"
+            [ "${n:-0}" -gt 0 ] && break
+            sleep 2
+          done
+          nix build .#cache-test --no-link --print-out-paths > "$RUNNER_TEMP/build.log" 2>&1
+          # 主断言 1：CI 侧直接问我们的 proxy（服务端看到 narinfo 请求）
+          curl -fsS "http://127.0.0.1:$port/$hash.narinfo" || { echo "proxy did not serve $hash.narinfo"; exit 1; }
+          # 主断言 2：proxy 请求日志里确有该 narinfo 的 GET（服务端证据）
+          grep -q "$hash.narinfo" "$RUNNER_TEMP/nixcache-proxy/proxy.log" \
+            || { echo "proxy.log has no narinfo GET for $hash"; exit 1; }
+          # 辅助断言：Nix 替换（而非本地构建）—— 版本敏感文案，仅供辅助
+          grep -q "will be fetched" "$RUNNER_TEMP/build.log" \
+            || { echo "no 'will be fetched' in build log"; exit 1; }
+          if grep -q "will be built" "$RUNNER_TEMP/build.log"; then
+            echo "leaf was built locally instead of substituted"; exit 1
+          fi
