@@ -6,6 +6,9 @@ updates:
     directories:
       - /
       - /nix
+      - /nix/cache
+      - /nix/cache/post
+      - /nix/debug
       - /nix/post
       - /release
     schedule:
