@@ -147,10 +147,13 @@ store 路径；`--` 分隔 + 逐一校验 `/nix/store/<32hex>-*` 前缀，防参
      `nix-hash --flat --type sha256 --base32`）；
    - **NarHash 归一化**：`nix path-info --json` 的 `narHash` 在 Nix ≥2.34 可能为
      SRI（`sha256-<b64>`），写入 narinfo 前统一 `nix hash convert --to base32`
-     转 Nix-base32（协议规范要求）；
-   - narinfo 生成（python，格式与上游 cache-builder.sh 一致）：`StorePath`、
+     转 Nix-base32（协议规范要求）；注意 `nix hash convert` 输出**裸 base32**，
+     narinfo 中必须补 `sha256:` 前缀——Nix 客户端 `parseAnyPrefixed` 拒绝裸值，
+     上游 cache-builder.sh 的裸值写法是**上游缺陷**，勿跟随；
+   - narinfo 生成（python；字段与上游一致，除上述 NarHash 修正外）：`StorePath`、
      `URL: nar/<hash>.nar.xz`、`Compression: xz`、`FileHash: sha256:<b32>`、
-     `FileSize`、`NarHash: sha256:<b32>`、`NarSize`、`References`（basename 空格
+     `FileSize`、`NarHash: sha256:<b32>`、`NarSize`（**必须 >0**，否则跳过并警告——
+     客户端将 `NarSize: 0` 视为 corrupt）、`References`（basename 空格分隔）、
      分隔）、`Deriver`（basename）、`Sig`*（来自 path-info，仅签名模式）。
 8. **上传**（纯 curl，OCI 协议；`--retry 3 --retry-all-errors --retry-delay 2
    --max-time`，PUT 按 digest 幂等可安全重试）：
@@ -168,8 +171,9 @@ store 路径；`--` 分隔 + 逐一校验 `/nix/store/<32hex>-*` 前缀，防参
    - `public_key`：签名模式 = 本缓存 key 的公开部分；非签名模式 = 保留现有值
      （步骤 4 守卫已保证此时必为空）；字段格式与上游一致（version/repo/registry/
      image/generated/public_key/entries/gc_roots）→ **vendored proxy 零改动可读**。
-10. **回读验证**：PUT 后轮询 GET `cache-index` manifest 直到 `generated` 等于本此值
-    （最长 ~60s）；失败 → `::error::` + 退出 1（blob 已传、index 未更新时本轮 fail，
+10. **回读验证**：PUT 后轮询 GET `cache-index` manifest 直到其 layer digest 等于
+    本此上传的 index blob（最长 ~60s；digest 比 `generated` 更稳——同秒两次 push
+    不会误判）；失败 → `::error::` + 退出 1（blob 已传、index 未更新时本轮 fail，
     下轮由步骤 6 的"本缓存签名保留"规则自动重试——不再永久丢）。
 11. 统计（上传/跳过数）写 `GITHUB_STEP_SUMMARY`（**不含** narinfo 原文/凭据）；
     `::warning::`/`::error::` 保证失败可见（历史问题：403 静默降级让人误以为缓存成功）。
@@ -214,24 +218,36 @@ docs/superpowers/specs/2026-09-02-nix-cache-oci-design.md
 
 在 `.github/workflows/nix.yml` 增加两个 job（沿用现有"先构建、再验证"模式）：
 
-1. `nix_cache`（`needs: clear_cache`，`if: ${{ always() && !failure() && !cancelled() }}`，
-   job 级 `permissions: packages: write`，matrix 复用现有 `os`/`install_action` 输入）：
+1. `nix_cache`（`needs: clear_cache`，`if: ${{ always() && !failure() && !cancelled() }}`
+   + fork 守卫——fork PR 的 token 只读，push 必失败，两个 job 均跳过；
+   job 级 `permissions: contents: read` + `packages: write`——job 级 permissions
+   未声明的作用域**无权限**，缺 `contents: read` 连 checkout 都会 403）。
+   矩阵为**单组合**（`ubuntu-latest` + `install_action: cachix`）：spec 原"复用
+   现有矩阵输入"改为单组合，因顶层 `concurrency: group: nix` 串行化下多组合会
+   显著拉长 CI，且 x86_64-linux 语义一致，其他组合后续扩展：
    - `./nix` → `./nix/cache`（未签名模式）→ 临时目录写最小 flake
-     （nixpkgs 输入钉 rev，`mkDerivation` 确定性输出，**不存在于 cache.nixos.org**）→
-     `nix build --print-out-paths` 取 LEAF → `./nix/cache/post` →
-     curl 换 token 后 GET `cache-index` 断言含 LEAF hash（带重试 ~60s）；
+     （nixpkgs 输入钉 rev `5dfba6236110080a54247d6460bc2ff5dda939cc`——
+     **移动分支会在两次 job 之间漂移导致 leaf 路径不一致**；`mkDerivation`
+     确定性输出，**不存在于 cache.nixos.org**）→ `nix build --print-out-paths`
+     取 LEAF → `./nix/cache/post` **带 `paths: ${{ env.LEAF_PATH }}`**（CI 用
+     paths 模式只推 leaf，避免整店扫描首轮回补上传安装器闭包；整店扫描默认
+     路径的回归验证留给手动/后续）→ curl 换 token 后 GET `cache-index` 断言
+     含 LEAF hash（带重试 ~60s，`GITHUB_REPOSITORY` 转小写）；
    - 可选：`./nix/post` 照旧（验证与 actions/cache 并存不冲突）。
-2. `nix_cache_with_cache`（`needs: nix_cache`，同样守卫；**不用 `./nix/post`**——
-   否则 actions/cache restore 会把 LEAF 直接放回 store，断言必挂）：
-   - `./nix` → `./nix/cache` → `nix build --dry-run --print-out-paths` 算 LEAF →
+2. `nix_cache_with_cache`（`needs: nix_cache`，同样守卫 + fork 守卫；
+   job 级 `permissions: contents: read` + `packages: read`；**不用 `./nix/post`**——
+   避免把 OCI 替换后的 store 写回 actions/cache）：
+   - `./nix` → `./nix/cache` → **`nix eval --raw .#cache-test.outPath` 算 LEAF**
+     （`nix path-info .#cache-test` 在路径不在 store 时会**直接失败**，不能用）→
      `nix store delete <LEAF>`（确保不在 store）→ `curl -X POST /_refresh` 并等待
-     entries > 0（防 TTL/读延迟）→ `nix build` 捕获输出 → 断言 LEAF 出现在
-     "will be fetched" 且不在 "will be built"（LEAF 不在 cache.nixos.org，被 fetch
-     的唯二来源只能是我们 proxy；输出行用 grep 容差解析，主断言仍以 curl
-     narinfo 200 + index entry 为准）。
-   - flake 确定性：mkDerivation 的 store 路径由输入内容+derivation 决定（与源文件
-     mtime 无关），两次 job 用同一 flake.lock 即可复现。
-
+     entries > 0（防冷启动索引未拉完/TTL；端口取 `$NIXCACHE_PORT`，不要 grep
+     nix.conf）→ `nix build` 捕获输出 →
+     **主断言（服务端证据，不依赖 Nix 版本文案）**：① curl
+     `http://127.0.0.1:$port/<LEAF-hash>.narinfo` 200；② `proxy.log` 出现该
+     narinfo 的 GET（代理逐请求记日志）。**辅助断言**：LEAF 出现在
+     "will be fetched" 且不在 "will be built"（版本敏感文案，仅作辅助）。
+   - flake 确定性：mkDerivation 的 store 路径由输入内容+derivation 决定
+     （与源文件 mtime 无关）；两个 job 的 flake.nix 钉同一 nixpkgs rev 即可复现。
 3. `AGENTS.md` 更新：actions 表补两行；"How the Nix cache works" 并列说明 GHCR
    机制与 actions/cache 快照的关系（互补、何时用哪个）；约定清单加 `nix/cache:`、
    `nix/cache/post:` 前缀；vendored 文件同步策略（钉 SHA、sha256 校验、人审）与
@@ -241,6 +257,8 @@ docs/superpowers/specs/2026-09-02-nix-cache-oci-design.md
 
 ## 已知限制（v1 不做，文档化）
 
+- **CI 验证覆盖面**：验证工作流用 `paths` 模式只推 leaf（确定性、快）；整店扫描
+  默认路径的回归验证需手动/后续（首轮回补等行为见下）。
 - **首轮回补**：无签名模式下首次启用会把从未入 index 的本地位路径（含 actions/cache
   恢复的）一次性上传；之后由 index 过滤自愈。大 store 首轮耗时/磁盘预算见下。
 - **单租户假设**：仅支持 GitHub-hosted 或独占 runner。自托管多 job/共享 runner：
