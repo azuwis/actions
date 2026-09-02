@@ -212,7 +212,7 @@ inputs:
     description: GitHub owner/repo of the GHCR cache image (ghcr.io/<repo>/nix-cache); lowercase. Must not come from untrusted input (e.g. fork head repo)
     default: ${{ github.repository }}
   token:
-    description: GitHub token for pulling a private cache (scopes: packages: read)
+    description: "GitHub token for pulling a private cache (scopes: packages: read)"
     default: ${{ github.token }}
   public_key:
     description: Local trust anchor. Cache signing public key (name:base64). Leave empty for unsigned mode (require-sigs = false)
@@ -431,7 +431,7 @@ inputs:
     description: GitHub owner/repo of the GHCR cache image (ghcr.io/<repo>/nix-cache); lowercase
     default: ${{ github.repository }}
   token:
-    description: GitHub token for pushing (needs job-level permissions: packages: write)
+    description: "GitHub token for pushing (needs job-level permissions: packages: write)"
     default: ${{ github.token }}
   signing_key:
     description: Cache signing key contents (name:base64); required if the cache index is signed; leave empty for unsigned mode
