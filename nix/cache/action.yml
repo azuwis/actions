@@ -1,0 +1,21 @@
+name: Nix OCI cache substituter (pull)
+inputs:
+  repo:
+    description: GitHub owner/repo of the GHCR cache image (ghcr.io/<repo>/nix-cache); lowercase. Must not come from untrusted input (e.g. fork head repo)
+    default: ${{ github.repository }}
+  token:
+    description: "GitHub token for pulling a private cache (scopes: packages: read)"
+    default: ${{ github.token }}
+  public_key:
+    description: Local trust anchor. Cache signing public key (name:base64). Leave empty for unsigned mode (require-sigs = false)
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Start OCI cache proxy and configure substituter
+      shell: bash
+      env:
+        INPUT_REPO: ${{ inputs.repo }}
+        INPUT_TOKEN: ${{ inputs.token }}
+        INPUT_PUBLIC_KEY: ${{ inputs.public_key }}
+      run: exec ${{ github.action_path }}/cache.sh
