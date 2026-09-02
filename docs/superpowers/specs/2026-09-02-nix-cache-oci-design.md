@@ -1,34 +1,31 @@
 # nix/cache — GHCR/OCI 后端 Nix 二进制缓存 Action 设计
 
-日期：2026-09-02
-状态：已与用户确认，待实现
+日期：2026-09-02（rev 2：吸收 5 方独立审查的修正意见）
+状态：设计已确认（两轮：用户决策 + 批量审查），待实现
 
 ## 背景与目标
 
 本仓库提供自定义 composite GitHub Actions 用于 Nix CI。现有缓存机制
-`nix/` + `nix/post/` 基于 `actions/cache` 对 `/nix/store` 做**全量快照**
-（按 `CACHE_KEY` 存取，有体积/时效限制，仅限同一仓库）。
+`nix/` + `nix/post/` 基于 `actions/cache` 对 `/nix/store` 做**全量快照**。
+新增 `nix/cache`：实现类似 `cachix/cachix-action` 的 pull（配置 substituter）
++ push（上传本地新构建路径），但**不使用 Cachix 服务**：
 
-目标：新增 `nix/cache` 目录，实现类似 `cachix/cachix-action` 的功能
-（pull：启动 substituter 并配置 Nix；push：job 结束时上传本地新构建路径），
-但**不使用 Cachix 服务**，而是：
-
-- **pull**：使用 vendored 的
-  `https://github.com/cmspam/nixcache-oci/blob/main/proxy/main.py`
-  （本地只读代理，实现 Nix 二进制缓存协议，后端为 GHCR OCI 仓库
-  `ghcr.io/<owner>/<repo>/nix-cache`）。
-- **push**：直接调 GHCR OCI API（纯 curl，同上游 `lib/cache-builder.sh`
-  的做法），上传 NAR blob 并重建 `cache-index` manifest。
+- **pull**：运行 vendored 的 `cmspam/nixcache-oci/proxy/main.py`（本地只读代理，
+  实现 Nix 二进制缓存协议；后端为 GHCR OCI 仓库 `ghcr.io/<repo>/nix-cache`）。
+- **push**：直接调 GHCR OCI API（纯 curl，同上游 `lib/cache-builder.sh`），
+  上传 NAR blob 并重建 `cache-index` manifest。
 
 ## 已确认的决策
 
 | 决策点 | 选择 |
 |---|---|
-| 目录位置 | `nix/cache/`（与 `nix/`、`nix/post/`、`nix/debug/` 平级，符合仓库约定） |
+| 目录位置 | `nix/cache/`（与 `nix/`、`nix/post/`、`nix/debug/` 平级） |
 | 入口形态 | 两个 action：`nix/cache`（pull）+ `nix/cache/post`（push），同 `nix/` + `nix/post/` 模式 |
-| push 范围 | store 快照 diff（预开始时快照 /nix/store，post 时对比新增），过滤外部签名/已在 GHCR index 的路径；可选 `paths` 输入覆盖 |
-| proxy 交付 | vendor `main.py` 进仓库，文件头记录上游 commit SHA |
-| 签名 | 可选 `signing_key`；默认不签名（pull 端 `require-sigs = false`） |
+| push 候选集 | **整店无签名扫描**（无快照 diff）：候选 = 未入 GHCR index 且无外部签名的 store 路径全集；`paths` 输入保留为显式/安全模式（multi-user 逃生舱） |
+| 签名 | 可选 `signing_key`；**信任锚本地化**：pull 用 `public_key` 输入，不做网络自报公钥的自动信任 |
+| registry | 仅 ghcr.io（不设输入，token 换发不指向任意主机） |
+| proxy 交付 | vendor（钉 commit SHA + 文件头出处注释）；上游仓库无 LICENSE，AGENTS.md 记录该风险并保持文件头完整出处 |
+| 运行前提 | 单租户 runner（GitHub-hosted）；自托管共享/多 job runner 需用 `paths` 模式并自行评估 |
 
 ## 架构
 
@@ -38,15 +35,16 @@ Job 开始                                    Job 结束
 │ nix/cache    │ ────────────▶ │ proxy    │   │ nix/cache/post    │
 │ (pull)       │               │ 127.0.0.1│   │ (push)            │
 │              │               │ :PORT    │   │                  │
-│ 快照 /nix/store ────────────▶│          │   │ store diff + paths│
-└──────────────┘               │          │   │ 过滤签名/GHCR已存 │
-       │                       └────┬─────┘   │ nix-store --dump  │
-       │ nix.conf: extra-substituters│         │ + python3 lzma    │
-       ▼                            │         │ GHCR OCI 上传     │
-  Nix 构建 ───── substitutes ────────┘ (NAR 流式转发)  └────────┬───────┘
-                                                               ▼
-                                                    ghcr.io/<repo>/nix-cache
-                                                    (NAR blobs + cache-index)
+│ 无快照        │               │          │   │ 整店无签名扫描    │
+└──────────────┘               │          │   │ + paths 输入      │
+       │                       └────┬─────┘   │ 过滤: index已存/  │
+       │ nix.conf marker 块          │(NAR 流式) │ 外部签名         │
+       ▼                            │         │ dump+python3 lzma │
+  Nix 构建 ───── substitutes ────────┘         │ GHCR OCI 上传     │
+                                               └────────┬────────┘
+                                                        ▼
+                                             ghcr.io/<repo>/nix-cache
+                                             (NAR blobs + cache-index)
 ```
 
 与现有 `nix/`、`nix/post/`（actions/cache 全量快照）**互补**，不修改它们。
@@ -59,88 +57,143 @@ Job 开始                                    Job 结束
 
 | 输入 | 默认 | 说明 |
 |---|---|---|
-| `repo` | `${{ github.repository }}` | GHCR 上的 `owner/repo`（必须小写，脚本 tolower 兜底），缓存镜像为 `ghcr.io/<repo>/nix-cache`；指向其他仓库可实现跨仓库共享 |
-| `registry` | `ghcr.io` | OCI registry |
-| `token` | `${{ github.token }}` | 拉取私有缓存（scope pull） |
+| `repo` | `${{ github.repository }}` | GHCR 的 `owner/repo`（脚本 tolower 兜底；GHCR 包名必须小写）。指向其他仓库 = 跨仓库共享缓存，文档要求仅用 fine-grained PAT 且**不得来自不可信输入**（如 fork 的 head repo） |
+| `token` | `${{ github.token }}` | 私有缓存 pull 用（scope pull）；无需 `packages: read` 之外权限 |
+| `public_key` | 空 | **本地信任锚**：本缓存的签名公钥（`name:base64`）。提供时信任该 key；不提供 = 未签名模式（见步骤 4） |
 
-`cache.sh pre` 的执行顺序：
+`cache.sh` 执行（单模式，无需 dispatch）：
 
-1. 端口选择：尝试 `37515`，被占用则用 python3 `socket.bind(0)` 找空闲端口；端口写入 `GITHUB_ENV`。
-2. 启动 vendored `nixcache-proxy.py`（后台进程），环境：
-   - `NIXCACHE_REPO` / `NIXCACHE_REGISTRY`（来自输入）
-   - `NIXCACHE_UPSTREAM=""`（Nix 并行查询 cache.nixos.org；避免代理内串行回退）
-   - `GITHUB_TOKEN` = token 输入
-3. 等待 `GET /nix-cache-info` 返回 200（最多 15 次、间隔 1s）；失败则打警告继续，**不 fail**（缓存尽力而为）。
-4. 配置 Nix：
-   - 多用户 daemon：`sudo tee -a /etc/nix/nix.conf`；同时写 `~/.config/nix/nix.conf`（覆盖 single-user 场景）。
-   - 始终追加：`extra-substituters = http://127.0.0.1:PORT`、`extra-trusted-substituters = http://127.0.0.1:PORT`。
-   - 取 `GET http://127.0.0.1:PORT/public-key`：200 → 追加 `extra-trusted-public-keys = <key>`；404 → 追加 `require-sigs = false` 并打印警告（影响所有 substituter）。
-5. 重启 nix-daemon 使配置生效：Linux `sudo systemctl restart nix-daemon || true`；macOS `launchctl unload/load`（探测方式沿用 `nix/restore.sh`）。
-6. 快照 store：`shopt -s nullglob` 后用 glob `printf '%s\n' /nix/store/*/`（空 store 时得空列表，
-   不输出字面模式）排序写入 `$RUNNER_TEMP/nix-cache-store-<timestamp>`，路径写入
-   `GITHUB_ENV`（`NIXCACHE_STORE_SNAPSHOT`）。
-7. `GITHUB_ENV` 另写：`NIXCACHE_REPO`、`NIXCACHE_REGISTRY`、`NIXCACHE_PORT`。
+1. **前置检查**：`python3 -c 'import sys; assert sys.version_info >= (3, 10)'`——
+   vendored 代理用 PEP 604 注解，Python <3.10 直接 `::error::` 退出（不静默降级）。
+2. **选端口**：恒用 `python3 -c 'socket.bind(0)'` 取空闲端口（不尝试固定 37515，
+   避免抢占竞态），记 `$PORT`。
+3. **启动代理**（后台，写 PID 到 `$RUNNER_TEMP/nixcache-proxy.pid`）：
+   - `NIXCACHE_REPO=<repo小写>`、`NIXCACHE_PORT=$PORT`、`NIXCACHE_UPSTREAM=""`、
+     `NIXCACHE_INDEX_DIR=$RUNNER_TEMP/nixcache-proxy`（0700，非 `~/.cache`）、
+     `GITHUB_TOKEN=<token>`。
+   - **注意**：`NIXCACHE_PORT` 必须与所选端口同一值（历史 bug：端口回退分支下
+     漏传该变量导致代理与配置指向不同端口 → 缓存静默失效）。
+4. **健康检查与身份校验**（用 `$PORT`，最多 15×1s）：
+   - `GET /nix-cache-info` 200；
+   - `GET /_status`，`jq -e '.repo'` 与输入 `repo`（小写）一致；
+   - 任一失败 → kill 代理、`::warning::` + step summary，**并跳到步骤 8**（绝不把
+     死端口/不可信端口写进 substituter 配置；此时代理未启动，PID 记为空值）。
+5. **配置 Nix**（幂等 marker 块 `# nix-cache begin`/`# nix-cache end`；先 `sed` 删旧块
+   再追加新块；写入 daemon 配置 `/etc/nix/nix.conf`（`sudo tee`）与
+   `~/.config/nix/nix.conf` 两份，两处包含同一块）：
+   - `extra-substituters = http://127.0.0.1:$PORT`
+   - `extra-trusted-substituters = http://127.0.0.1:$PORT`
+   - 若提供了 `public_key`：`extra-trusted-public-keys = <public_key>`；并对比
+     `GET /public-key`（index 自报）：不一致 → `::warning::`（以本地输入为准继续）。
+   - 若未提供 `public_key`：`require-sigs = false` + `::warning::`（影响所有
+     substituter，仅建议单租户 CI；文档写明替代：提供 `public_key`）。**该行必须
+     写入 daemon 配置**（用户级配置对 root daemon 的验签不生效）。
+6. **重启 daemon**（探测 `/nix/var/nix/daemon-socket`，沿用 `nix/restore.sh` 方式）：
+   Linux `sudo systemctl restart nix-daemon`；macOS `launchctl unload` + `load -w`。
+   失败 → `::warning::` + step summary 写明"配置未生效"（不静默）。
+7. **自检**：`nix show-config` 输出中 substituters 含 `http://127.0.0.1:$PORT`，
+   否则 `::warning::`。
+8. 写 `GITHUB_ENV`：`NIXCACHE_REPO`、`NIXCACHE_PORT`、`NIXCACHE_PROXY_PID`。
 
-使用约束：**必须先于 `nix/cache/post` 且在 `nix/`（安装 Nix）之后使用**。
+使用约束：在 `nix/`（安装 Nix）之后、任何 `nix build` 之前使用；`nix/cache/post`
+不是本 action 的后置钩子（分体设计），使用时需按文档示例成对出现。
 
 ### 2. `nix/cache/post/action.yml`（push）
 
-输入：`repo`、`registry`、`token`（默认 `${{ github.token }}`）、`signing_key`
-（可选 secret）、`paths`（可选，空格分隔的 store 路径；默认空 = 用快照 diff）。
+输入：`repo`（默认 `${{ github.repository }}`）、`token`（默认 `${{ github.token }}`）、
+`signing_key`（可选 secret；由调用方 `with: signing_key: ${{ secrets.* }}` 传入——
+**composite action 不能直接访问 `secrets` context**）、`paths`（可选，空格分隔的
+store 路径；`--` 分隔 + 逐一校验 `/nix/store/<32hex>-*` 前缀，防参数注入）。
 
 `push.sh` 执行顺序：
 
-1. **候选集**：若 `paths` 非空 → `nix path-info --recursive <paths>` 的闭包；
-   否则 → 快照 diff（`comm` 两个排序列表的新增项）。
-2. **前置守卫**（避免破坏既有缓存）：
-   - 拉取当前 `cache-index`（manifest → layer digest → blob）：**404 = 空 index 正常继续**；
-     **其他错误（网络/认证）→ 打印警告并退出 0，跳过本轮上传**（当作空 index 合并会丢失全部旧条目）。
-   - 现有 index 携带 `public_key` 但本轮未提供 `signing_key` → 打印警告并退出 0，跳过上传
-     （向已签名缓存注入无签名 narinfo 会导致客户端验签永久拒绝这些新条目）。
-3. **过滤**：
-   - 已存在 entries 里的 hash 跳过（上次已传）。
-   - 其余路径 `nix path-info --json`，带 `signatures` 的跳过
-     （= 从 cache.nixos.org 等外部缓存替换来的，上游可继续直接服务）。
-   - 剩余 = 本次本地新构建路径。
-4. 若提供 `signing_key`：先 `nix store sign --key-file` 这些路径（签名进入 narinfo 的 `Sig`）。
-5. 逐路径导出（顺序执行，v1 不做并行）：
-   - `nix-store --dump <path> | python3 -m <lzma 流式压缩器>`（python3 stdlib `lzma`，preset=1；
-     避免依赖 `xz` 二进制，Linux/macOS 通用；流式压缩不整文件进内存）。
-   - FileHash：直接调 `nix hash file --type sha256 --base32 <nar_file>`（Nix-base32 输出，
-     与上游 `cache-builder.sh` 一致；Nix ≥ 2.18，本仓库使用 26.05 channel，已满足）。
-   - narinfo 生成（格式与上游 `cache-builder.sh` 完全一致）：
-     `StorePath`、`URL: nar/<hash>.nar.xz`、`Compression: xz`、`FileHash: sha256:<b32>`、
-     `FileSize`、`NarHash`、`NarSize`、`References`（basename 空格分隔）、`Deriver`（basename）、`Sig`*。
-   - narHash/narSize/references/deriver/signatures 取自 `nix path-info --json`。
-6. **上传**（纯 curl，OCI 协议）：
-   - 认证：`token`（GITHUB_TOKEN 或 PAT）→
-     `GET https://<registry>/token?scope=repository:<repo>/nix-cache:pull,push&service=<registry>`
-     换 registry token（Basic `token:<cred>`）。
-   - blob：HEAD 查存在 → 不存在则 POST `blobs/uploads/` 取 Location → PUT（digest 参数）。
-   - manifest：以 `cache-index` 为 tag PUT OCI manifest（config 空 blob + 1 个 index layer）。
-7. **重建 index**：下载现有 `cache-index` blob，合并 entries（新条目覆盖同 hash），
-   `public_key` = 本 repo 脚本传入的公钥（无 key 时保留现有值），`generated` = UTC now；
-   字段格式与上游一致（version/repo/registry/image/generated/public_key/entries/gc_roots），
-   **保证 vendored proxy 零改动可读**。
-8. 清理：kill 代理进程（若有）；输出统计（上传/跳过/hash 列表）到 `GITHUB_STEP_SUMMARY`。
+1. **清理**：若 `NIXCACHE_PROXY_PID` 非空且 `kill -0` 有效（先 `kill -0` 探测 + 端口
+   探测双重确认，防误杀同 runner 其他 job），kill 之；随后移除两处 nix.conf 的
+   marker 块（best-effort，`sed` 失败只警告——自托管 runner 恢复原状，避免残留
+   死端口 substituter 与 `require-sigs=false` 跨 job 累积）。
+2. **候选集**：
+   - `paths` 输入 → `nix path-info --recursive --json <paths>` 闭包；
+   - 否则 → 整店：`shopt -s nullglob; printf '%s\n' /nix/store/*/`（过滤空行），
+     列表写临时文件。
+   - 路径数可能上千：所有 `nix path-info`/`nix store sign` 一律 `xargs -n 128` 分批
+     （macOS ARG_MAX 仅 256KiB），结果写文件，避免 argv 超限。
+3. **拉取现有 index**（manifest → layer digest → blob，token 换发见步骤 6）：
+   - 404 → 视为空 index，正常继续；
+   - 其他错误（网络/认证）→ `::warning::` + 退出 0，**跳过本轮上传**（防止按空
+     index 合并丢光旧条目）。
+4. **前置守卫**：
+   - index 携带 `public_key` 而本轮未提供 `signing_key` → `::warning::` + 退出 0
+     （禁止向已签名缓存注入无签名 narinfo）。
+   - 提供 `signing_key` 而 index 已有**不同** `public_key` → `::error::` + 退出 1
+     （key 轮换视为冲突，不静默覆盖）。
+5. **签名**（仅当提供 `signing_key`）：
+   - `nix store sign --key-file`（分批）；
+   - **校验**：`nix path-info --json` 逐路径确认含本缓存 key 名的签名；任一缺失 →
+     `::error::` + 退出 1（历史 bug：签名失败静默继续会写出"无 Sig 但 index 带
+     public_key"→ 验签客户端永久拒收）；
+   - `OWN_KEY_NAME` = `nix key convert-secret-to-public` 输出的 key 名前缀。
+6. **过滤**：
+   - 路径的 32 位 hash ∈ index entries → 跳过（上次已传）；
+   - 剩余路径：**存在非本缓存 key 名的签名 → 跳过**（= 从 cache.nixos.org 等外部
+     缓存替换来的；无 key 模式即"存在任何签名"）。本缓存自己签名但未入 index 的
+     路径**保留**（上轮传了 blob 没更新 index 的路径本轮自动重试——修复"永久漏传"）。
+   - 多余候选（未入 index、无外部签名）= 本轮上传集。
+7. **导出与计算**（顺序执行；工作目录 `$RUNNER_TEMP/nixcache-work`，`df` 预检剩余
+   空间 ≥ 预计量，每路径完成后删除 nar 文件）：
+   - `nix-store --dump <path> | python3 nix/cache/nar_xz.py > <hash>.nar.xz`
+     （stdlib `lzma`，preset=1，**FORMAT_XZ** —— 流式压缩，不整文件进内存；
+     写死 `FORMAT_XZ` 也不依赖 `xz` 二进制，Linux/macOS 通用）；
+   - FileHash：`nix hash file --type sha256 --base32 <nar.xz>`（Nix-base32；降级链：
+     `nix-hash --flat --type sha256 --base32`）；
+   - **NarHash 归一化**：`nix path-info --json` 的 `narHash` 在 Nix ≥2.34 可能为
+     SRI（`sha256-<b64>`），写入 narinfo 前统一 `nix hash convert --to base32`
+     转 Nix-base32（协议规范要求）；
+   - narinfo 生成（python，格式与上游 cache-builder.sh 一致）：`StorePath`、
+     `URL: nar/<hash>.nar.xz`、`Compression: xz`、`FileHash: sha256:<b32>`、
+     `FileSize`、`NarHash: sha256:<b32>`、`NarSize`、`References`（basename 空格
+     分隔）、`Deriver`（basename）、`Sig`*（来自 path-info，仅签名模式）。
+8. **上传**（纯 curl，OCI 协议；`--retry 3 --retry-all-errors --retry-delay 2
+   --max-time`，PUT 按 digest 幂等可安全重试）：
+   - 认证：`token` → `GET https://ghcr.io/token?scope=repository:<repo>/nix-cache:pull,push
+     &service=ghcr.io`；凭据只经 `-H "Authorization: Basic <b64>"`（不进
+     `/proc/<pid>/cmdline`）；脚本首行 `echo "::add-mask::${TOKEN}"`，全程不打印 token；
+   - blob：HEAD 查存在 → 不存在 POST `blobs/uploads/` → 解析 **Location（可能相对
+     路径，按上游 cache-builder.sh 处理拼成绝对 URL）** → PUT（digest 参数，
+     **`?`/`&` 分隔符处理**）；
+   - blob 预检：> ~10 GiB 跳过 + `::warning::`（GHCR 单 blob 上限）；
+   - manifest：以 `cache-index` 为 tag PUT（config 空 blob + 1 个 index layer）。
+9. **重建 index**（python，**全部经文件传递**——receipts JSONL + 现有 index 文件，
+   防 ARG_MAX，照抄上游模式）：
+   - 合并 entries（新条目覆盖同 hash），`generated`=UTC now，`gc_roots: []`；
+   - `public_key`：签名模式 = 本缓存 key 的公开部分；非签名模式 = 保留现有值
+     （步骤 4 守卫已保证此时必为空）；字段格式与上游一致（version/repo/registry/
+     image/generated/public_key/entries/gc_roots）→ **vendored proxy 零改动可读**。
+10. **回读验证**：PUT 后轮询 GET `cache-index` manifest 直到 `generated` 等于本此值
+    （最长 ~60s）；失败 → `::error::` + 退出 1（blob 已传、index 未更新时本轮 fail，
+    下轮由步骤 6 的"本缓存签名保留"规则自动重试——不再永久丢）。
+11. 统计（上传/跳过数）写 `GITHUB_STEP_SUMMARY`（**不含** narinfo 原文/凭据）；
+    `::warning::`/`::error::` 保证失败可见（历史问题：403 静默降级让人误以为缓存成功）。
 
 **权限要求**：push 需要 job 级 `permissions: packages: write`；私有缓存 pull 需要
-`packages: read`（写入 README 与示例）。
+`packages: read`。fork PR：GITHUB_TOKEN 只读、secrets 不可用 → push 被守卫跳过
+（`::warning::`），私有缓存不可读（文档写明）。
 
 ### 3. `nix/cache/nixcache-proxy.py`（vendored）
 
 - 逐字拷贝自 `cmspam/nixcache-oci/proxy/main.py`，钉住上游 commit
-  `2e21568cf2cf0824ea6f5e9ce54179aee19cbf6e`（main，2026-08-31，
-  https://github.com/cmspam/nixcache-oci/blob/2e21568cf2cf0824ea6f5e9ce54179aee19cbf6e/proxy/main.py）。
-- 文件头注释注明：来源 URL、commit SHA、同步策略（上游更新时重新拷贝并更新 SHA）。
-- 唯一改动：不允许（保持与上游一致，便于 diff/同步）。
+  `2e21568cf2cf0824ea6f5e9ce54179aee19cbf6e`（main，2026-08-31；URL 直接带 commit
+  SHA，不用 main 分支）；文件头注释：来源 URL、commit SHA、文件 sha256、同步策略
+  （上游变更 = 重新拷贝 + 人审 diff + 更新 SHA/校验值）、**上游无 LICENSE 的版权
+  风险声明**（向作者提出申请，AGENTS.md 记录）。
+- 唯一改动：不允许。运行时要求 Python ≥3.10（步骤 1 已硬检查）。
 
 ## 文件清单
 
 ```
 nix/cache/action.yml
-nix/cache/cache.sh          # 主脚本（"$@" 分派，如 pre）
-nix/cache/nixcache-proxy.py # vendored
+nix/cache/cache.sh           # pull 脚本（单模式执行体）
+nix/cache/nar_xz.py          # lzma 流式压缩器（stdin→stdout，FORMAT_XZ, preset 1）
+nix/cache/nixcache-proxy.py  # vendored
 nix/cache/post/action.yml
 nix/cache/post/push.sh
 docs/superpowers/specs/2026-09-02-nix-cache-oci-design.md
@@ -148,46 +201,66 @@ docs/superpowers/specs/2026-09-02-nix-cache-oci-design.md
 
 新增内容遵循仓库约定：
 
-- 脚本 `#!/usr/bin/env bash` + `set -eo pipefail`；2 空格缩进，120 列上限。
-- action.yml 用 `runs.using: composite` + `shell: bash` + `exec ${{ github.action_path }}/xxx.sh`。
+- 脚本 `#!/usr/bin/env bash` + `set -eo pipefail`；**bash 3.2 兼容子集**（无 assoc
+  array/mapfile/`${var,,}`/nameref——GitHub macOS runner 仍为 Bash 3.2.57）；
+  2 空格缩进，120 列上限。
+- action.yml 用 `runs.using: composite` + `shell: bash` + `exec ${{ github.action_path }}/xxx.sh`；
+  每个输入带 `description`，YAML 过 `yamfmt`。
 - 外部 action 一律 SHA 钉住（本设计不引入新外部 action）。
-- `GITHUB_ENV` 写状态（沿用 `restore.sh`/`save.sh` 模式）。
+- `GITHUB_ENV` 传状态（`NIXCACHE_REPO/PORT/PROXY_PID`），与 `restore.sh`/`save.sh`
+  模式一致；与既有 `CACHE_KEY`/`CACHE_TIMESTAMP` 等无命名冲突。
 
 ## 验证
 
-在 `.github/workflows/nix.yml` 增加（复用现有"先构建、再验证"双 job 模式）：
+在 `.github/workflows/nix.yml` 增加两个 job（沿用现有"先构建、再验证"模式）：
 
-1. `nix_cache` job（权限 `packages: write`）：
-   - `./nix`（安装 Nix）→ `./nix/cache` → 在临时目录写一个最小 flake
-     （`mkDerivation` 生成确定性输出，保证**不存在于 cache.nixos.org**）→ 构建该包 →
-     `./nix/cache/post` → 用 curl 断言 `ghcr.io/<repo>/nix-cache` 的 `cache-index`
-     包含该 store hash 的 entry（OCI token 用 GITHUB_TOKEN 换）。
-2. `nix_cache_with_cache` job（needs `nix_cache`）：
-   - `./nix` → `./nix/cache` → 同一 flake 构建（**不覆盖 substituters**：
-     `nix/cache` 已把本缓存追加为 extra-substituter，cache.nixos.org 仍然并行服务 stdenv 等
-     上游路径；若只留本缓存，job1 里替换来的 stdenv 闭包不在我们的 index 里，会全量重编译）。
-   - 断言（leaf 包是确定性小包、**不存在于 cache.nixos.org**，故"被 fetched"的唯二来源
-     只能是我们 proxy；构建输出默认会列出 `these N paths will be fetched` / `will be built`）：
-     leaf 的 store 路径出现在 **fetched** 行列中、且不出现在 **built** 行列——
-     证明 Nix 从本缓存替换成功而非重编译。
-   - 依赖：上一个 job 的 push 已把 entry 写入 GHCR index；本 job 代理启动时预取索引。
-3. trigger paths 追加 `nix/cache/**`。
-4. `AGENTS.md` 的 actions 表补 `nix/cache` 与 `nix/cache/post` 两行，简述缓存机制。
+1. `nix_cache`（`needs: clear_cache`，`if: ${{ always() && !failure() && !cancelled() }}`，
+   job 级 `permissions: packages: write`，matrix 复用现有 `os`/`install_action` 输入）：
+   - `./nix` → `./nix/cache`（未签名模式）→ 临时目录写最小 flake
+     （nixpkgs 输入钉 rev，`mkDerivation` 确定性输出，**不存在于 cache.nixos.org**）→
+     `nix build --print-out-paths` 取 LEAF → `./nix/cache/post` →
+     curl 换 token 后 GET `cache-index` 断言含 LEAF hash（带重试 ~60s）；
+   - 可选：`./nix/post` 照旧（验证与 actions/cache 并存不冲突）。
+2. `nix_cache_with_cache`（`needs: nix_cache`，同样守卫；**不用 `./nix/post`**——
+   否则 actions/cache restore 会把 LEAF 直接放回 store，断言必挂）：
+   - `./nix` → `./nix/cache` → `nix build --dry-run --print-out-paths` 算 LEAF →
+     `nix store delete <LEAF>`（确保不在 store）→ `curl -X POST /_refresh` 并等待
+     entries > 0（防 TTL/读延迟）→ `nix build` 捕获输出 → 断言 LEAF 出现在
+     "will be fetched" 且不在 "will be built"（LEAF 不在 cache.nixos.org，被 fetch
+     的唯二来源只能是我们 proxy；输出行用 grep 容差解析，主断言仍以 curl
+     narinfo 200 + index entry 为准）。
+   - flake 确定性：mkDerivation 的 store 路径由输入内容+derivation 决定（与源文件
+     mtime 无关），两次 job 用同一 flake.lock 即可复现。
+
+3. `AGENTS.md` 更新：actions 表补两行；"How the Nix cache works" 并列说明 GHCR
+   机制与 actions/cache 快照的关系（互补、何时用哪个）；约定清单加 `nix/cache:`、
+   `nix/cache/post:` 前缀；vendored 文件同步策略（钉 SHA、sha256 校验、人审）与
+   上游无 LICENSE 的说明；`dependabot.yml` 目录清单补 `/nix/cache`、`/nix/cache/post`
+   （顺带补 `/nix/debug`）。
+4. trigger paths 无需改动（现有 `nix/**` 已覆盖 `nix/cache/**`）。
 
 ## 已知限制（v1 不做，文档化）
 
-- **索引合并竞态**：两 job 同时 push 时后写覆盖先写（最后一次 wins）；典型工作流串行，可接受。
-- **未签名模式**需要 `require-sigs = false`，影响所有 substituter 的验签；
-  长期使用建议配 `signing_key`。
-- **签名状态切换**：存量缓存从"无签名"转为"有签名"后，旧的无签名条目对开启验签的客户端
-  不可用（回退到本地重编译）；反向（有签名→无签名）由前置守卫阻止上传，只保留旧条目。
-- GHCR 私有仓库存储/带宽有配额，公开仓库无限制（上游已注明）。
-- proxy 仅缓存索引 + 流式转发 NAR，不在磁盘缓存 NAR；索引 TTL 300s 只影响长驻代理，
-  每个 CI job 都是新进程，跨 job 无陈旧索引问题。
+- **首轮回补**：无签名模式下首次启用会把从未入 index 的本地位路径（含 actions/cache
+  恢复的）一次性上传；之后由 index 过滤自愈。大 store 首轮耗时/磁盘预算见下。
+- **单租户假设**：仅支持 GitHub-hosted 或独占 runner。自托管多 job/共享 runner：
+  整店扫描可能看到他人构建的路径（上传前有签名过滤兜底，但无签名路径仍会入选）、
+  nix.conf 端口冲突、代理 PID 误判——此类环境请用 `paths` 模式并自行评估。
+- **签名信任边界**：能写 GHCR 包 = 完全控制使用该缓存的 CI；未签名模式
+  `require-sigs=false` 削弱全部 substituter 验签；跨仓库共享仅建议 fine-grained PAT
+  + 显式 `public_key`；`repo` 不得来自不可信输入。
+- **索引合并竞态**：跨仓库并发 push 仍是 last-write-wins（工作流级 `concurrency`
+  可串行化本仓库内并发；`public_key` 单调规则防降级为无签名）。
+- **规模预算**：大 NAR（数 GB）串行 dump+压缩+上传，时长/临时磁盘未做上限管理；
+  GHCR 15GiB 级 blob 预检跳过；私有仓库存储/带宽配额。
+- vendored 代理需要 Python ≥3.10（旧 macOS CLT 3.9 已硬检查 loud fail；可用
+  nixpkgs 的 python3 规避）。
+- fork PR：无 `packages: write`/secrets，私有缓存不可用（公开缓存 pull 匿名可用）。
 
 ## 非目标
 
 - 修改 `nix/`、`nix/post/` 现有逻辑。
 - 支持 Windows。
-- 实现上游 `gc-cache.yml`（GC/保留策略，后续可按需加）。
+- 实现上游 `gc-cache.yml`（GC/保留策略）。
 - 在 proxy 内实现写路径（保持上游只读代理契约）。
+- key 轮换（视为冲突 fail；轮换 = 未来版本的手动流程）。
