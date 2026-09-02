@@ -47,6 +47,19 @@ cleanup() {
       fi
     fi
   done
+  # restart daemon so the marker-block removal takes effect (a long-lived daemon
+  # would otherwise keep the dead-port substituter and require-sigs=false)
+  if [ -e /nix/var/nix/daemon-socket ]; then
+    case "${RUNNER_OS:-}" in
+    macOS)
+      sudo launchctl unload /Library/LaunchDaemons/org.nixos.nix-daemon.plist 2>/dev/null || true
+      sudo launchctl load -w /Library/LaunchDaemons/org.nixos.nix-daemon.plist 2>/dev/null || true
+      ;;
+    *)
+      sudo systemctl restart nix-daemon 2>/dev/null || true
+      ;;
+    esac
+  fi
   rm -rf "$WORK_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -78,15 +91,15 @@ oci_get_token() {
   fi
 }
 
-fetch_manifest() { # tag outfile -> 0 ok, 1 not found, 2 other error
-  local tag="$1" out="$2" code
+fetch_manifest() { # tag outfile [quiet] -> 0 ok, 1 not found, 2 other error
+  local tag="$1" out="$2" quiet="${3:-0}" code
   code="$(curl -sS -o "$out" -w '%{http_code}' --max-time 30 \
     -H "Authorization: Bearer $OCI_TOKEN" \
     -H "Accept: application/vnd.oci.image.manifest.v1+json" \
     "https://${REGISTRY}/v2/${REPO}/nix-cache/manifests/${tag}" 2>/dev/null || true)"
   if [ "$code" = 200 ]; then return 0; fi
   if [ "$code" = 404 ]; then return 1; fi
-  echo "::warning::failed to fetch OCI manifest $tag (HTTP $code); skipping upload" >&2
+  [ "$quiet" = 0 ] && echo "::warning::failed to fetch OCI manifest $tag (HTTP $code); skipping upload" >&2
   return 2
 }
 
@@ -233,8 +246,13 @@ if [ -n "$PATHS_INPUT" ]; then
     fi
   fi
 else
-  shopt -s nullglob
-  printf '%s\n' /nix/store/*/ | sed 's#/$##' | awk 'length > 0' >"$CAND"
+  # 权威枚举：nix path-info --all 列出全部有效路径（含 file 型：fetchurl 产物、
+  # .drv、脚本等——旧尾斜杠 glob 只匹配目录，会永久漏掉文件型路径）；
+  # 失败时降级回旧 glob 扫描并打警告（宁多勿哑）；空结果由下方守卫处理
+  nix path-info --all --json --json-format 1 2>/dev/null | jq -r 'keys[]' >"$CAND" \
+    || { echo "::warning::nix path-info --all failed; falling back to glob scan" >&2
+         shopt -s nullglob
+         printf '%s\n' /nix/store/*/ | sed 's#/$##' | awk 'length > 0' >"$CAND"; }
 fi
 if [ ! -s "$CAND" ]; then
   echo "Nothing to upload"
@@ -313,7 +331,7 @@ mkdir -p "$CACHE_DIR/nar"
 NAR_XZ="$SCRIPT_DIR/../nar_xz.py"
 
 # make_narinfo <path> <hash> <nar_file> <file_size> <file_hash> <path_info> <cache_dir>
-# 退出码：0=成功；3=NarSize 非法（跳过）；4=其他生成失败
+# 退出码：0=成功；3=NarSize 非法（跳过）；4=FileHash/NarHash 为空（跳过）；其他异常=1（同样跳过）
 make_narinfo() {
   python3 - "$1" "$2" "$3" "$4" "$5" "$6" "$7" <<'PY'
 import json
@@ -344,6 +362,10 @@ nar_size = int(info.get("narSize", 0))
 if nar_size <= 0:
     print("::warning::narSize <= 0 for %s; skipping" % store_path, file=sys.stderr)
     sys.exit(3)
+if not file_hash or not nar_hash:
+    # 空 FileHash/NarHash 会毒化 index 条目（入 index 后永不重试）
+    print("::warning::empty FileHash/NarHash for %s; skipping" % store_path, file=sys.stderr)
+    sys.exit(4)
 refs = info.get("references", []) or []
 deriver = info.get("deriver", "")
 sigs = info.get("signatures", info.get("sigs", [])) or []
@@ -531,7 +553,7 @@ put_manifest cache-index "$manifest"
 # ---- 8. readback verification (layer digest is stronger than `generated`) ----
 OK=0
 for _ in $(seq 1 30); do
-  if fetch_manifest cache-index "$WORK_DIR/readback.json"; then
+  if fetch_manifest cache-index "$WORK_DIR/readback.json" 1; then
     RD="$(jq -r '.layers[0].digest // empty' "$WORK_DIR/readback.json")"
     if [ -n "$RD" ] && [ "$RD" = "$index_digest" ]; then
       OK=1

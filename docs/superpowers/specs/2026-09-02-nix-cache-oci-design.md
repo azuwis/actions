@@ -113,7 +113,9 @@ store 路径；`--` 分隔 + 逐一校验 `/nix/store/<32hex>-*` 前缀，防参
    死端口 substituter 与 `require-sigs=false` 跨 job 累积）。
 2. **候选集**：
    - `paths` 输入 → `nix path-info --recursive --json <paths>` 闭包；
-   - 否则 → 整店：`shopt -s nullglob; printf '%s\n' /nix/store/*/`（过滤空行），
+   - 否则 → 整店：`nix path-info --all --json --json-format 1 | jq -r 'keys[]'`
+     权威枚举（含 file 型路径：fetchurl 产物、.drv、脚本等——旧尾斜杠 glob 只匹配
+     目录，会永久漏掉文件型路径）；失败 → `::warning::` + 降级回旧 glob 扫描。
      列表写临时文件。
    - 路径数可能上千：所有 `nix path-info`/`nix store sign` 一律 `xargs -n 128` 分批
      （macOS ARG_MAX 仅 256KiB），结果写文件，避免 argv 超限。
