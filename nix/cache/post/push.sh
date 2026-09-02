@@ -211,14 +211,26 @@ if [ -n "$PATHS_INPUT" ]; then
       echo "::error::invalid store path: $p" >&2
       exit 1
     fi
+    if [ ! -e "$p" ]; then
+      echo "::warning::store path not found: $p; skipping" >&2
+      continue
+    fi
     echo "$p" >>"$CAND"
   done
   # 展开闭包（spec 要求 --recursive）；macOS 无 xargs -a → stdin 重定向；
-  # POSIX sh -c（禁 bashism）；-- 结束选项解析
-  xargs -n 64 sh -c 'nix path-info --recursive --json --json-format 1 -- "$@" 2>/dev/null | jq -r "if type==\"array\" then . else to_entries|map({path:.key}+.value) end | .[] | .path"' _ <"$CAND" \
-    | sort -u >"$CAND.closure" 2>/dev/null || true
-  if [ -s "$CAND.closure" ]; then
-    mv "$CAND.closure" "$CAND"
+  # POSIX sh -c（禁 bashism）；-- 结束选项解析；stderr 单独捕获供批次失败告警
+  if [ -s "$CAND" ]; then
+    xargs -n 64 sh -c 'nix path-info --recursive --json --json-format 1 -- "$@" | jq -r "if type==\"array\" then . else to_entries|map({path:.key}+.value) end | .[] | .path"' _ <"$CAND" \
+      >"$CAND.closure.tmp" 2>"$CAND.closure.err" || true
+    if [ -s "$CAND.closure.err" ]; then
+      echo "::warning::closure expansion failed for a path in: $PATHS_INPUT" >&2
+    fi
+    rm -f "$CAND.closure.err"
+    if [ -s "$CAND.closure.tmp" ]; then
+      sort -u "$CAND.closure.tmp" >"$CAND.closure"
+      rm -f "$CAND.closure.tmp"
+      mv "$CAND.closure" "$CAND"
+    fi
   fi
 else
   shopt -s nullglob
@@ -370,7 +382,7 @@ while IFS= read -r path; do
     continue
   fi
   size="$(wc -c <"$nar_file" | tr -d ' ')"
-  if [ "$size" -gt 10737418240 ] || [ -z "$size" ]; then
+  if [ -z "$size" ] || [ "$size" -gt 10737418240 ]; then
     echo "::warning::$path nar missing or exceeds ~10GiB GHCR blob limit; skipping" >&2
     rm -f "$nar_file"
     SKIPPED=$((SKIPPED + 1))
