@@ -98,10 +98,11 @@ def http_request(method, url, headers=None, body=None, timeout=30.0,
     """One HTTP request.  Returns (status, headers, body).
 
     `body` may be bytes or a seekable file object (streamed, with
-    Content-Length set by the caller).  Retries `retries` times on transport
-    errors only (curl --retry-all-errors observed behavior); a persistent
-    transport failure returns (0, [], b'') — the same 'no HTTP code' the
-    curl `-w '%{http_code}'` (000) case produced.
+    Content-Length set by the caller; re-seek(0) before every attempt so a
+    retried PUT replays the file).  Retries `retries` times on transport
+    errors and on HTTP 5xx responses — curl `--retry 3 --retry-all-errors`
+    semantics (one shared retry budget); a persistent failure returns
+    (0, [], b'') for transport errors and the final status otherwise.
     """
     parts = urllib.parse.urlsplit(url)
     path = parts.path or "/"
@@ -120,6 +121,10 @@ def http_request(method, url, headers=None, body=None, timeout=30.0,
             status = resp.status
             hdrs = resp.getheaders()
             conn.close()
+            if status >= 500 and attempt < retries:
+                attempt += 1
+                time.sleep(retry_delay)
+                continue
             return status, hdrs, data
         except (OSError, http.client.HTTPException):
             if attempt < retries:
@@ -555,11 +560,14 @@ def cleanup(proxy_pid: str, runner_os: str, work_dir: str, home: str) -> None:
     best-effort daemon restart, remove the work directory.  Every action is
     best-effort (bash `|| true`): cleanup must never raise."""
 
-    def best_effort(cmd) -> None:
+    def best_effort(cmd, capture: bool = False):
+        """bash `|| true` equivalent; returns the CompletedProcess or None."""
         try:
-            subprocess.run(cmd, stderr=subprocess.DEVNULL)
+            if capture:
+                return subprocess.run(cmd, capture_output=True, text=True)
+            return subprocess.run(cmd, stderr=subprocess.DEVNULL)
         except OSError:
-            pass
+            return None
 
     if proxy_pid:
         alive = False
@@ -569,9 +577,8 @@ def cleanup(proxy_pid: str, runner_os: str, work_dir: str, home: str) -> None:
         except (OSError, ValueError):
             alive = False
         if alive:
-            p = subprocess.run(["ps", "-p", proxy_pid, "-o", "command="],
-                               capture_output=True, text=True)
-            if PROXY_MARKER in p.stdout:
+            p = best_effort(["ps", "-p", proxy_pid, "-o", "command="], capture=True)
+            if p is not None and PROXY_MARKER in (p.stdout or ""):
                 try:
                     os.kill(int(proxy_pid), signal.SIGTERM)
                 except OSError:
@@ -911,6 +918,11 @@ def main(env=None) -> None:
               f"(found {sys.version_info.major}.{sys.version_info.minor})",
               file=sys.stderr)
         sys.exit(1)
+    # bash trap EXIT runs cleanup on SIGTERM too; the try/finally below only
+    # sees exceptions, so map SIGTERM to SystemExit(143) (SIGINT already
+    # arrives as KeyboardInterrupt inside the try).  SystemExit then unwinds
+    # through the finally -> cleanup, and the process exits with 143.
+    signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
     cfg = config_from_env(os.environ if env is None else env)
     work_dir = os.path.join(cfg["runner_temp"] or "/tmp", "nixcache-work")
     cache_dir = os.path.join(work_dir, "cache")

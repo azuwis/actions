@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from unittest import mock
 
 PUSH_PY = Path(__file__).resolve().parents[1] / "post" / "push.py"
 _spec = importlib.util.spec_from_file_location("push", PUSH_PY)
@@ -238,6 +239,109 @@ class UrlTest(unittest.TestCase):
             push.build_put_url("https://storage.example.com/u-3?x=1", "ghcr.io",
                                "sha256:abc"),
             "https://storage.example.com/u-3?x=1&digest=sha256:abc")
+
+
+class _FakeResponse:
+    def __init__(self, status, body=b"", headers=()):
+        self.status = status
+        self._body = body
+        self._headers = list(headers)
+
+    def read(self):
+        return self._body
+
+    def getheaders(self):
+        return self._headers
+
+    def close(self):
+        pass
+
+
+class _FakeConn:
+    def __init__(self, host, port, timeout=None, scenario=()):
+        self.host, self.port, self.timeout = host, port, timeout
+        self.scenario = scenario
+        self.requested = []
+
+    def request(self, method, path, body=None, headers=None):
+        # consume a file body the way http.client does, then record the bytes
+        data = body.read() if hasattr(body, "read") else body
+        self.requested.append((method, path, data, headers))
+
+    def getresponse(self):
+        item = self.scenario.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    def close(self):
+        pass
+
+
+class HttpRequestTest(unittest.TestCase):
+    """http_request retry semantics: 5xx and transport errors retried with
+    curl --retry 3 --retry-all-errors semantics; retries=0 call sites (HEAD,
+    manifest GETs) never retry."""
+
+    def run_request(self, scenario, retries, method="GET", body=None, retry_delay=0.0):
+        conns = []
+
+        def factory(host, port, timeout=None):
+            conn = _FakeConn(host, port, timeout, scenario)
+            conns.append(conn)
+            return conn
+
+        url = "https://ghcr.io/v2/o/r/nix-cache/manifests/cache-index"
+        with mock.patch("http.client.HTTPSConnection", side_effect=factory):
+            result = push.http_request(method, url, body=body, retries=retries,
+                                       retry_delay=retry_delay)
+        return result, conns
+
+    def test_5xx_retried_then_success(self):
+        (status, _, body), conns = self.run_request(
+            [_FakeResponse(500), _FakeResponse(200, b"ok")], retries=3)
+        self.assertEqual((status, body), (200, b"ok"))
+        self.assertEqual(len(conns), 2)  # initial + 1 retry
+
+    def test_5xx_retry_budget_is_three(self):
+        (status, _, _), conns = self.run_request(
+            [_FakeResponse(500)] * 4, retries=3)
+        self.assertEqual(status, 500)
+        self.assertEqual(len(conns), 4)  # curl --retry 3 -> 4 attempts
+
+    def test_4xx_not_retried(self):
+        (status, _, _), conns = self.run_request([_FakeResponse(403)], retries=3)
+        self.assertEqual(status, 403)
+        self.assertEqual(len(conns), 1)
+
+    def test_retries_zero_returns_immediately(self):
+        # HEAD and fetch/readback GETs pass retries=0: a 500 surfaces as-is
+        (status, _, _), conns = self.run_request([_FakeResponse(500)], retries=0)
+        self.assertEqual(status, 500)
+        self.assertEqual(len(conns), 1)
+
+    def test_transport_error_retried_then_success(self):
+        (status, _, body), conns = self.run_request(
+            [ConnectionError("boom"), _FakeResponse(200, b"ok")], retries=3)
+        self.assertEqual((status, body), (200, b"ok"))
+        self.assertEqual(len(conns), 2)
+
+    def test_transport_error_exhausted_returns_zero(self):
+        (status, _, _), conns = self.run_request(
+            [ConnectionError("boom")] * 3, retries=2)
+        self.assertEqual(status, 0)
+        self.assertEqual(len(conns), 3)
+
+    def test_retried_put_replays_file_body_from_zero(self):
+        payload = b"payload" * 100
+        f = io.BytesIO(payload)
+        (status, _, _), conns = self.run_request(
+            [_FakeResponse(503), _FakeResponse(201)], retries=3, method="PUT",
+            body=f)
+        self.assertEqual(status, 201)
+        # each attempt must have sent the full payload (seek(0) before request)
+        for conn in conns:
+            self.assertEqual(conn.requested[0][2], payload)
 
 
 @unittest.skipUnless(shutil.which("nix"), "nix not on PATH")
