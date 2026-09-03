@@ -197,7 +197,7 @@ jobs:
           cat > "$RUNNER_TEMP/ci-flake/flake.nix" <<'EOF'
           {
             # 钉 rev：移动分支会在两次 job 之间漂移，导致 leaf 路径不一致
-            inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05?rev=5dfba6236110080a54247d6460bc2ff5dda939cc";
+            inputs.nixpkgs.url = "github:NixOS/nixpkgs?rev=5dfba6236110080a54247d6460bc2ff5dda939cc";
             outputs = { self, nixpkgs }: {
               packages.x86_64-linux.cache-test = nixpkgs.legacyPackages.x86_64-linux.stdenv.mkDerivation {
                 pname = "cache-test";
@@ -263,7 +263,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ci-flake"
           cat > "$RUNNER_TEMP/ci-flake/flake.nix" <<'EOF'
           {
-            inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05?rev=5dfba6236110080a54247d6460bc2ff5dda939cc";
+            inputs.nixpkgs.url = "github:NixOS/nixpkgs?rev=5dfba6236110080a54247d6460bc2ff5dda939cc";
             outputs = { self, nixpkgs }: {
               packages.x86_64-linux.cache-test = nixpkgs.legacyPackages.x86_64-linux.stdenv.mkDerivation {
                 pname = "cache-test";
