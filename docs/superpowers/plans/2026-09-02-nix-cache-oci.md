@@ -96,11 +96,11 @@ git commit -m "nix/cache: vendor nixcache-oci proxy at 2e21568"
 ### Task 2: nar_xz.py 流式压缩器 + 单元测试
 
 **Files:**
-- Create: `nix/cache/post/nar_xz.py`
+- Create: `nix/cache/post/push.py（进程内 lzma）`
 - Create: `nix/cache/tests/test_nar_xz.py`
 
 **Interfaces:**
-- Produces: `nix/cache/post/nar_xz.py` —— `python3 nar_xz.py`：stdin 读原始 NAR，stdout 写 `.xz`（`FORMAT_XZ`，preset 1）。
+- Produces: `nix/cache/post/push.py（进程内 lzma）` —— `python3 nar_xz.py`：stdin 读原始 NAR，stdout 写 `.xz`（`FORMAT_XZ`，preset 1）。
 - Consumes: 无。
 
 - [ ] **Step 1: 写失败测试** `nix/cache/tests/test_nar_xz.py`
@@ -145,7 +145,7 @@ python3 -m unittest discover -s nix/cache/tests -v
 # Expected: FAILED (FileNotFoundError: nar_xz.py 不存在)
 ```
 
-- [ ] **Step 3: 实现** `nix/cache/post/nar_xz.py`
+- [ ] **Step 3: 实现** `nix/cache/post/push.py（进程内 lzma）`
 
 ```python
 #!/usr/bin/env python3
@@ -186,7 +186,7 @@ python3 -m unittest discover -s nix/cache/tests -v
 - [ ] **Step 5: Commit**
 
 ```bash
-git add nix/cache/post/nar_xz.py nix/cache/tests/test_nar_xz.py
+git add nix/cache/post/push.py（进程内 lzma） nix/cache/tests/test_nar_xz.py
 git commit -m "nix/cache: add streaming xz compressor with tests"
 ```
 
@@ -419,7 +419,7 @@ git commit -m "nix/cache: add pull action (vendored proxy + substituter config)"
 - Create: `nix/cache/post/push.py`
 
 **Interfaces:**
-- Consumes: `NIXCACHE_REPO`/`NIXCACHE_PORT`/`NIXCACHE_PROXY_PID`（Task 3 写入 GITHUB_ENV）、`nix/cache/post/nar_xz.py`（Task 2）。
+- Consumes: `NIXCACHE_REPO`/`NIXCACHE_PORT`/`NIXCACHE_PROXY_PID`（Task 3 写入 GITHUB_ENV）、`nix/cache/post/push.py（进程内 lzma）`（Task 2）。
 - Inputs（action.yml）：`repo`（默认 `${{ github.repository }}`）、`token`（默认 `${{ github.token }}`）、`signing_key`（可选 secret **内容**，composite 不能直接读 secrets context，调用方用 `with:` 传入）、`paths`（可选 store 路径，其**闭包**被推送）。
 
 - [ ] **Step 1: 写 action.yml** `nix/cache/post/action.yml`
@@ -1246,7 +1246,7 @@ GHCR OCI (`ghcr.io/<repo>/nix-cache`), without any Cachix service:
    `$GITHUB_ENV`.
 2. `nix/cache/post` pushes either the closure of the `paths` input or store
    paths with no external signature that are not yet in the GHCR `cache-index`,
-   exports them (`nix-store --dump` + `nix/cache/post/nar_xz.py`), uploads the NARs as
+   exports them (`nix-store --dump` + `nix/cache/post/push.py（进程内 lzma）`), uploads the NARs as
    OCI blobs, and merges a new `cache-index` manifest. It kills the proxy and
    removes the nix.conf marker block afterwards.
 

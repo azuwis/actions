@@ -429,3 +429,35 @@ class RealNixTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CompressStreamTest(unittest.TestCase):
+    """In-process xz compressor used by dump_nar (FORMAT_XZ, preset 1)."""
+
+    def test_round_trip(self):
+        import lzma
+        from io import BytesIO
+        comp = push._compress_stream
+        data = b"hello world\n" * 100000
+        out = BytesIO()
+        comp(BytesIO(data), out)
+        self.assertEqual(lzma.decompress(out.getvalue()), data)
+
+    def test_xz_magic(self):
+        from io import BytesIO
+        comp = push._compress_stream
+        out = BytesIO()
+        comp(BytesIO(b"abc"), out)
+        self.assertEqual(out.getvalue()[:6], b"\xfd7zXZ\x00")
+
+    def test_empty_input(self):
+        import lzma
+        from io import BytesIO
+        comp = push._compress_stream
+        out = BytesIO()
+        comp(BytesIO(b""), out)
+        self.assertEqual(lzma.decompress(out.getvalue()), b"")
+
+
+if __name__ == "__main__":
+    unittest.main()

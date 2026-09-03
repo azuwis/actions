@@ -21,6 +21,7 @@ import glob
 import hashlib
 import http.client
 import json
+import lzma
 import os
 import re
 import shutil
@@ -428,18 +429,27 @@ def store_scan_candidates():
     return out
 
 
-def dump_nar(path: str, nar_file: str, nar_xz: str) -> bool:
-    """`nix-store --dump <path> | python3 nar_xz.py > <nar_file>` with bash
-    pipefail semantics (both sides must succeed)."""
+def _compress_stream(src, dst) -> None:
+    """Stream `src` (bytes-like) into `dst` as xz (FORMAT_XZ, preset 1)."""
+    comp = lzma.LZMACompressor(format=lzma.FORMAT_XZ, preset=1)
+    while True:
+        chunk = src.read(1 << 20)
+        if not chunk:
+            break
+        data = comp.compress(chunk)
+        if data:
+            dst.write(data)
+    dst.write(comp.flush())
+
+
+def dump_nar(path: str, nar_file: str) -> bool:
+    """`nix-store --dump <path>` -> xz, writing `nar_file`; pipefail semantics
+    (the dumper must succeed and compression runs in-process)."""
     dumper = subprocess.Popen(["nix-store", "--dump", path],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    with open(nar_file, "wb") as out:
-        comp = subprocess.Popen([sys.executable, nar_xz],
-                                stdin=dumper.stdout, stdout=out)
-        dumper.stdout.close()
-        comp_rc = comp.wait()
-    dumper_rc = dumper.wait()
-    return dumper_rc == 0 and comp_rc == 0
+    with dumper.stdout as src, open(nar_file, "wb") as dst:
+        _compress_stream(src, dst)
+    return dumper.wait() == 0
 
 
 # ------------------------------------------------------- narinfo + filtering
@@ -781,7 +791,7 @@ def step_filter_candidates(cand, idx_file: str, own_key_name: str):
 
 
 def step_export_upload(paths, oci_token: str, repo: str, work_dir: str,
-                       cache_dir: str, nar_xz: str):
+                       cache_dir: str):
     """Export + narinfo + blob upload loop.
     Returns (uploaded, skipped, receipts path)."""
     os.makedirs(os.path.join(cache_dir, "nar"), exist_ok=True)
@@ -793,7 +803,7 @@ def step_export_upload(paths, oci_token: str, repo: str, work_dir: str,
         nar_file = os.path.join(cache_dir, "nar", hash_prefix + ".nar.xz")
         remove_file(nar_file)
         print(f"::group::nix/cache export {hash_prefix}", file=sys.stderr)
-        if not dump_nar(path, nar_file, nar_xz):
+        if not dump_nar(path, nar_file):
             warn(f"failed to dump {path}; skipping")
             skipped += 1
             print("::endgroup::", file=sys.stderr)
@@ -960,8 +970,6 @@ def main(env=None) -> None:
     cfg = config_from_env(os.environ if env is None else env)
     work_dir = os.path.join(cfg["runner_temp"] or "/tmp", "nixcache-work")
     cache_dir = os.path.join(work_dir, "cache")
-    nar_xz = str(Path(__file__).resolve().parent / "nar_xz.py")
-
     print(f"::add-mask::{cfg['token']}")
     os.makedirs(work_dir, exist_ok=True)
     if not cfg["runner_temp"]:
@@ -994,7 +1002,7 @@ def main(env=None) -> None:
             print("Nothing to upload")
             sys.exit(0)
         uploaded, skipped, receipts_path = step_export_upload(
-            keep, oci_token, cfg["repo"], work_dir, cache_dir, nar_xz)
+            keep, oci_token, cfg["repo"], work_dir, cache_dir)
         if uploaded == 0:
             print("Nothing new to upload")
             sys.exit(0)
