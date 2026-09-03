@@ -50,9 +50,9 @@ jobs:
             };
           }
           EOF
-          # 每轮唯一 version → 本轮 leaf 唯一：index 断言证明"本轮 push"真的发生
+          # 每轮/每次 attempt 唯一 version → 本次 leaf 唯一：index 断言证明"本轮 push"真的发生
           # （确定性 leaf 会被上一轮残留掩盖，307 式跳过也会假绿——见 push.py 重定向修复）
-          sed -i "s/__RUNID__/$GITHUB_RUN_ID/" "$RUNNER_TEMP/ci-flake/flake.nix"
+          sed -i "s/__RUNID__/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/" "$RUNNER_TEMP/ci-flake/flake.nix"
       - name: Build and capture leaf path
         run: |
           cd "$RUNNER_TEMP/ci-flake"
@@ -119,9 +119,9 @@ jobs:
             };
           }
           EOF
-          # 每轮唯一 version → 本轮 leaf 唯一：index 断言证明"本轮 push"真的发生
+          # 每轮/每次 attempt 唯一 version → 本次 leaf 唯一：index 断言证明"本轮 push"真的发生
           # （确定性 leaf 会被上一轮残留掩盖，307 式跳过也会假绿——见 push.py 重定向修复）
-          sed -i "s/__RUNID__/$GITHUB_RUN_ID/" "$RUNNER_TEMP/ci-flake/flake.nix"
+          sed -i "s/__RUNID__/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/" "$RUNNER_TEMP/ci-flake/flake.nix"
       - name: Ensure leaf is not in store, then substitute from OCI cache
         run: |
           cd "$RUNNER_TEMP/ci-flake"
