@@ -39,6 +39,15 @@ INDEX_MEDIA_TYPE = "application/vnd.nix.cache.index.v1+json"
 
 STORE_PATH_RE = re.compile(r"^/nix/store/[a-z0-9]{32}-")
 CHUNK = 1 << 20                     # 1 MiB
+
+try:  # zstd 进标准库是 Python 3.14；旧版回退 lzma
+    from compression.zstd import ZstdCompressor as _ZstdCompressor
+    COMPRESSION = "zstd"
+    COMPRESSION_EXT = "zst"
+except ImportError:
+    _ZstdCompressor = None
+    COMPRESSION = "xz"
+    COMPRESSION_EXT = "xz"
 MAX_NAR_SIZE = 10737418240          # ~10 GiB GHCR blob limit
 MAX_RETRIES = 3                     # curl --retry 3 (→ 4 attempts)
 RETRY_DELAY = 2                     # curl --retry-delay 2
@@ -429,17 +438,37 @@ def store_scan_candidates():
     return out
 
 
-def _compress_stream(src, dst) -> None:
-    """Stream `src` (bytes-like) into `dst` as xz (FORMAT_XZ, preset 1)."""
+def _lzma_compress_stream(src, dst) -> None:
     comp = lzma.LZMACompressor(format=lzma.FORMAT_XZ, preset=1)
     while True:
-        chunk = src.read(1 << 20)
+        chunk = src.read(CHUNK)
         if not chunk:
             break
         data = comp.compress(chunk)
         if data:
             dst.write(data)
     dst.write(comp.flush())
+
+
+def _zstd_compress_stream(src, dst) -> None:
+    comp = _ZstdCompressor()
+    while True:
+        chunk = src.read(CHUNK)
+        if not chunk:
+            break
+        data = comp.compress(chunk)
+        if data:
+            dst.write(data)
+    dst.write(comp.flush())
+
+
+def _compress_stream(src, dst) -> None:
+    """Stream `src` (bytes-like) into `dst` compressed; `Compression: zstd`
+    on Python >= 3.14, xz fallback otherwise (narinfo self-describes)."""
+    if _ZstdCompressor is not None:
+        _zstd_compress_stream(src, dst)
+    else:
+        _lzma_compress_stream(src, dst)
 
 
 def dump_nar(path: str, nar_file: str) -> bool:
@@ -487,8 +516,8 @@ def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
 
     lines = [
         "StorePath: " + store_path,
-        "URL: nar/" + hash_prefix + ".nar.xz",
-        "Compression: xz",
+        "URL: nar/" + hash_prefix + ".nar." + COMPRESSION_EXT,
+        "Compression: " + COMPRESSION,
         "FileHash: sha256:" + file_hash,
         "FileSize: " + str(file_size),
         "NarHash: sha256:" + nar_hash,
@@ -800,7 +829,7 @@ def step_export_upload(paths, oci_token: str, repo: str, work_dir: str,
     skipped = 0
     for path in paths:
         hash_prefix = os.path.basename(path)[:32]
-        nar_file = os.path.join(cache_dir, "nar", hash_prefix + ".nar.xz")
+        nar_file = os.path.join(cache_dir, "nar", hash_prefix + ".nar." + COMPRESSION_EXT)
         remove_file(nar_file)
         print(f"::group::nix/cache export {hash_prefix}", file=sys.stderr)
         if not dump_nar(path, nar_file):

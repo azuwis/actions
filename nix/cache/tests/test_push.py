@@ -8,6 +8,7 @@ not on PATH (the CI unit-tests step runs before `./nix` installs anything).
 import importlib.util
 import io
 import json
+import lzma
 import shutil
 import tempfile
 import unittest
@@ -91,8 +92,8 @@ class MakeNarinfoTest(unittest.TestCase):
         self.assertIn("NarHash: sha256:" + NIX32_ZERO, text)
         self.assertEqual(text.count("NarHash: sha256:"), 1)
         self.assertIn("StorePath: " + STORE, text)
-        self.assertIn("URL: nar/" + H32 + ".nar.xz", text)
-        self.assertIn("Compression: xz", text)
+        self.assertIn("URL: nar/" + H32 + ".nar." + push.COMPRESSION_EXT, text)
+        self.assertIn("Compression: " + push.COMPRESSION, text)
         self.assertIn("FileHash: sha256:" + "f" * 52, text)
         self.assertIn("FileSize: 123", text)
         self.assertIn("NarSize: 1000", text)
@@ -426,37 +427,47 @@ class RealNixTest(unittest.TestCase):
             text = (Path(tmp) / (H32 + ".narinfo")).read_text()
             self.assertIn("NarHash: sha256:" + NIX32_ZERO, text)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CompressStreamTest(unittest.TestCase):
-    """In-process xz compressor used by dump_nar (FORMAT_XZ, preset 1)."""
+    """Compression used by dump_nar: zstd on Python >= 3.14, xz fallback."""
 
-    def test_round_trip(self):
-        import lzma
-        from io import BytesIO
-        comp = push._compress_stream
-        data = b"hello world\n" * 100000
-        out = BytesIO()
-        comp(BytesIO(data), out)
-        self.assertEqual(lzma.decompress(out.getvalue()), data)
+    def _data(self):
+        return b"hello world\n" * 100000
 
-    def test_xz_magic(self):
+    def test_compress_stream_active_path_round_trip(self):
         from io import BytesIO
-        comp = push._compress_stream
         out = BytesIO()
-        comp(BytesIO(b"abc"), out)
-        self.assertEqual(out.getvalue()[:6], b"\xfd7zXZ\x00")
+        push._compress_stream(BytesIO(self._data()), out)
+        if push.COMPRESSION == "zstd":
+            import compression.zstd as z
+            dec = z.ZstdDecompressor().decompress(out.getvalue())
+        else:
+            dec = lzma.decompress(out.getvalue())
+        self.assertEqual(dec, self._data())
 
-    def test_empty_input(self):
-        import lzma
+    def test_compress_stream_magic(self):
         from io import BytesIO
-        comp = push._compress_stream
         out = BytesIO()
-        comp(BytesIO(b""), out)
-        self.assertEqual(lzma.decompress(out.getvalue()), b"")
+        push._compress_stream(BytesIO(b"abc"), out)
+        if push.COMPRESSION == "zstd":
+            self.assertEqual(out.getvalue()[:4], b"\x28\xb5\x2f\xfd")
+        else:
+            self.assertEqual(out.getvalue()[:6], b"\xfd7zXZ\x00")
+
+    def test_lzma_fallback_round_trip(self):
+        from io import BytesIO
+        out = BytesIO()
+        push._lzma_compress_stream(BytesIO(self._data()), out)
+        self.assertEqual(lzma.decompress(out.getvalue()), self._data())
+
+    @unittest.skipUnless(push._ZstdCompressor is not None,
+                         "zstd requires Python >= 3.14")
+    def test_zstd_branch_round_trip(self):
+        from io import BytesIO
+        import compression.zstd as z
+        out = BytesIO()
+        push._zstd_compress_stream(BytesIO(self._data()), out)
+        self.assertEqual(z.ZstdDecompressor().decompress(out.getvalue()),
+                         self._data())
 
 
 if __name__ == "__main__":

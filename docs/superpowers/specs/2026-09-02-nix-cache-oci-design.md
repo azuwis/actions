@@ -153,7 +153,7 @@ store 路径；`--` 分隔 + 逐一校验 `/nix/store/<32hex>-*` 前缀，防参
      narinfo 中必须补 `sha256:` 前缀——Nix 客户端 `parseAnyPrefixed` 拒绝裸值，
      上游 cache-builder.sh 的裸值写法是**上游缺陷**，勿跟随；
    - narinfo 生成（python；字段与上游一致，除上述 NarHash 修正外）：`StorePath`、
-     `URL: nar/<hash>.nar.xz`、`Compression: xz`、`FileHash: sha256:<b32>`、
+     `URL: nar/<hash>.nar.<zst|xz>`、`Compression: zstd`（Python ≥3.14；旧版回退 `xz`，narinfo 自标注）、`FileHash: sha256:<b32>`、
      `FileSize`、`NarHash: sha256:<b32>`、`NarSize`（**必须 >0**，否则跳过并警告——
      客户端将 `NarSize: 0` 视为 corrupt）、`References`（basename 空格分隔）、
      分隔）、`Deriver`（basename）、`Sig`*（来自 path-info，仅签名模式）。
