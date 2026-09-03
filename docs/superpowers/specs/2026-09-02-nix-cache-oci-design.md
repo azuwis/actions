@@ -201,7 +201,7 @@ nix/cache/cache.sh           # pull 脚本（单模式执行体）
 nix/cache/nar_xz.py          # lzma 流式压缩器（stdin→stdout，FORMAT_XZ, preset 1）
 nix/cache/nixcache-proxy.py  # vendored
 nix/cache/post/action.yml
-nix/cache/post/push.sh
+nix/cache/post/push.py
 docs/superpowers/specs/2026-09-02-nix-cache-oci-design.md
 ```
 

@@ -151,7 +151,7 @@ python3 -m unittest discover -s nix/cache/tests -v
 #!/usr/bin/env python3
 """Streaming xz compressor (FORMAT_XZ, preset 1) — stdin to stdout.
 
-Used by nix/cache/post/push.sh to compress NAR dumps without depending on
+Used by nix/cache/post/push.py to compress NAR dumps without depending on
 the `xz` binary (Linux/macOS CI runners both ship python3).
 """
 import lzma
@@ -200,7 +200,7 @@ git commit -m "nix/cache: add streaming xz compressor with tests"
 
 **Interfaces:**
 - Consumes: `nix/cache/nixcache-proxy.py`（Task 1）。
-- Produces（GITHUB_ENV，供 `nix/cache/post/push.sh` 用）: `NIXCACHE_REPO`（小写）、`NIXCACHE_PORT`（空闲端口）、`NIXCACHE_PROXY_PID`（可为空）；另写 `$RUNTEMP/nixcache-proxy/proxy.pid`（PID 文件）。
+- Produces（GITHUB_ENV，供 `nix/cache/post/push.py` 用）: `NIXCACHE_REPO`（小写）、`NIXCACHE_PORT`（空闲端口）、`NIXCACHE_PROXY_PID`（可为空）；另写 `$RUNTEMP/nixcache-proxy/proxy.pid`（PID 文件）。
 - Inputs（action.yml）：`repo`（默认 `${{ github.repository }}`）、`token`（默认 `${{ github.token }}`）、`public_key`（默认空）。
 
 - [ ] **Step 1: 写 action.yml** `nix/cache/action.yml`
@@ -416,7 +416,7 @@ git commit -m "nix/cache: add pull action (vendored proxy + substituter config)"
 
 **Files:**
 - Create: `nix/cache/post/action.yml`
-- Create: `nix/cache/post/push.sh`
+- Create: `nix/cache/post/push.py`
 
 **Interfaces:**
 - Consumes: `NIXCACHE_REPO`/`NIXCACHE_PORT`/`NIXCACHE_PROXY_PID`（Task 3 写入 GITHUB_ENV）、`nix/cache/nar_xz.py`（Task 2）。
@@ -1035,16 +1035,16 @@ echo "::endgroup::" >&2
 - [ ] **Step 3: 语法与静态检查（完整脚本）**
 
 ```bash
-bash -n nix/cache/post/push.sh
-command -v shellcheck >/dev/null && shellcheck nix/cache/post/push.sh || true
+bash -n nix/cache/post/push.py
+command -v shellcheck >/dev/null && shellcheck nix/cache/post/push.py || true
 # POSIX 兼容性（应无输出）：禁 bashism / xargs -a
-grep -nE 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+,,|\$\{[a-zA-Z_]+@|\$\{[a-zA-Z_]+:[0-9]|xargs -a ' nix/cache/post/push.sh || true
+grep -nE 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+,,|\$\{[a-zA-Z_]+@|\$\{[a-zA-Z_]+:[0-9]|xargs -a ' nix/cache/post/push.py || true
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add nix/cache/post/action.yml nix/cache/post/push.sh
+git add nix/cache/post/action.yml nix/cache/post/push.py
 git commit -m "nix/cache/post: add push action (GHCR OCI upload + index merge)"
 ```
 
@@ -1287,7 +1287,7 @@ git commit -m "nix/cache: document OCI cache mechanism and dependabot dirs"
 - [ ] **Step 1: 本地最后检查**
 
 ```bash
-bash -n nix/cache/cache.sh nix/cache/post/push.sh
+bash -n nix/cache/cache.sh nix/cache/post/push.py
 python3 -m unittest discover -s nix/cache/tests -v
 git status --short  # 期望干净
 ```
