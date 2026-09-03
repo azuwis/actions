@@ -328,6 +328,56 @@ class HttpRequestTest(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(len(conns), 1)
 
+    def test_get_follows_307_redirect(self):
+        (status, _, body), conns = self.run_request(
+            [_FakeResponse(307, headers=[("Location", "https://cdn.example.com/next")]),
+             _FakeResponse(200, b"ok")], retries=3)
+        self.assertEqual((status, body), (200, b"ok"))
+        self.assertEqual(len(conns), 2)                # one attempt, one hop
+        self.assertEqual(conns[1].host, "cdn.example.com")
+
+    def test_relative_location_resolved_absolute(self):
+        (status, _, _), conns = self.run_request(
+            [_FakeResponse(307, headers=[("Location", "/v2/o/r/blobs/sha256:abc")]),
+             _FakeResponse(200, b"ok")], retries=0)
+        self.assertEqual(status, 200)
+        self.assertEqual(conns[1].host, "ghcr.io")
+        self.assertEqual(conns[1].requested[0][1], "/v2/o/r/blobs/sha256:abc")
+
+    def test_redirect_chain_limited_to_five_hops(self):
+        (status, _, _), conns = self.run_request(
+            [_FakeResponse(302, headers=[("Location", "/loop")])] * 6,
+            retries=0)
+        self.assertEqual(status, 302)                    # 6th hop not followed
+        self.assertEqual(len(conns), 6)                  # 1 + 5 follows
+
+    def test_head_follows_redirect(self):
+        (status, _, _), conns = self.run_request(
+            [_FakeResponse(307, headers=[("Location", "/next")]),
+             _FakeResponse(404)], retries=0, method="HEAD")
+        self.assertEqual(status, 404)
+        self.assertEqual(len(conns), 2)
+
+    def test_put_follows_307_308_with_body_replay(self):
+        payload = b"payload" * 100
+        f = io.BytesIO(payload)
+        (status, _, _), conns = self.run_request(
+            [_FakeResponse(307, headers=[("Location", "/up/1")]),
+             _FakeResponse(308, headers=[("Location", "/up/2")]),
+             _FakeResponse(201)], retries=0, method="PUT", body=f)
+        self.assertEqual(status, 201)
+        self.assertEqual(len(conns), 3)                  # 1 + 2 hops
+        for conn in conns:                               # full replay each hop
+            self.assertEqual(conn.requested[0][2], payload)
+
+    def test_put_302_not_followed(self):
+        # GET/HEAD follow any 30x; PUT/POST only 307/308 (method preserved)
+        (status, _, _), conns = self.run_request(
+            [_FakeResponse(302, headers=[("Location", "/up")])],
+            retries=0, method="PUT")
+        self.assertEqual(status, 302)
+        self.assertEqual(len(conns), 1)
+
     def test_retries_zero_returns_immediately(self):
         # HEAD and fetch/readback GETs pass retries=0: a 500 surfaces as-is
         (status, _, _), conns = self.run_request([_FakeResponse(500)], retries=0)

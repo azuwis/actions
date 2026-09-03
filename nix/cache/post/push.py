@@ -45,6 +45,8 @@ CLOSURE_BATCH = 64                  # xargs -n 64 in the bash version
 STD_BATCH = 128                     # xargs -n 128 in the bash version
 READBACK_TRIES = 30                 # readback poll loop
 READBACK_SLEEP = 2
+REDIRECT_STATUSES = (301, 302, 303, 307, 308)
+MAX_REDIRECTS = 5                   # curl -L default hop limit
 
 PROXY_MARKER = "nixcache-proxy.py"
 NIX_CONF_BEGIN = "# nix-cache begin"
@@ -95,33 +97,26 @@ def header_value(headers, name: str) -> str:
 
 def http_request(method, url, headers=None, body=None, timeout=30.0,
                  retries=0, retry_delay=2.0):
-    """One HTTP request.  Returns (status, headers, body).
+    """One HTTP request with curl `-L` redirect following.  Returns
+    (status, headers, body).
 
     `body` may be bytes or a seekable file object (streamed, with
-    Content-Length set by the caller; re-seek(0) before every attempt so a
-    retried PUT replays the file).  Retries `retries` times on transport
-    errors and on HTTP 408/429/5xx responses — curl `--retry 3
-    --retry-all-errors` semantics (one shared retry budget); a persistent
-    failure returns (0, [], b'') for transport errors and the final status
-    otherwise.
+    Content-Length set by the caller; re-seek(0) before every request and
+    every redirect hop, so a retried or redirected PUT replays the file).
+    Redirects (301/302/303/307/308 with a Location header) are followed up
+    to MAX_REDIRECTS hops inside a single attempt, curl `-L` style: GET/HEAD
+    follow any 30x; PUT/POST only 307/308, preserving the method and body;
+    Authorization is dropped when the redirect leaves the original host.
+    Retries `retries` times on transport errors and on HTTP 408/429/5xx
+    responses — curl `--retry 3 --retry-all-errors` semantics (one shared
+    retry budget); a persistent failure returns (0, [], b'') for transport
+    errors and the final status otherwise.
     """
-    parts = urllib.parse.urlsplit(url)
-    path = parts.path or "/"
-    if parts.query:
-        path += "?" + parts.query
-    port = parts.port or (443 if parts.scheme == "https" else 80)
     attempt = 0
     while True:
         try:
-            if hasattr(body, "seek"):
-                body.seek(0)
-            conn = http.client.HTTPSConnection(parts.hostname, port, timeout=timeout)
-            conn.request(method, path, body=body, headers=headers or {})
-            resp = conn.getresponse()
-            data = resp.read()
-            status = resp.status
-            hdrs = resp.getheaders()
-            conn.close()
+            status, hdrs, data = _send_request(method, url, headers or {},
+                                               body, timeout)
             if (status >= 500 or status in (408, 429)) and attempt < retries:
                 attempt += 1
                 time.sleep(retry_delay)
@@ -133,6 +128,44 @@ def http_request(method, url, headers=None, body=None, timeout=30.0,
                 time.sleep(retry_delay)
                 continue
             return 0, [], b""
+
+
+def _send_request(method, url, headers, body, timeout=30.0):
+    """One transfer: a single request plus curl `-L` redirect following
+    (relative Locations resolved against the current URL, max MAX_REDIRECTS
+    hops; a 30x without Location or over the hop limit is returned as-is).
+    Transport errors propagate to the caller's retry loop."""
+    current_url = url
+    current_headers = dict(headers)
+    hops = 0
+    while True:
+        parts = urllib.parse.urlsplit(current_url)
+        path = parts.path or "/"
+        if parts.query:
+            path += "?" + parts.query
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        if hasattr(body, "seek"):
+            body.seek(0)
+        conn = http.client.HTTPSConnection(parts.hostname, port, timeout=timeout)
+        conn.request(method, path, body=body, headers=current_headers)
+        resp = conn.getresponse()
+        data = resp.read()
+        status = resp.status
+        hdrs = resp.getheaders()
+        conn.close()
+        location = header_value(hdrs, "Location")
+        follows = method in ("GET", "HEAD") or status in (307, 308)
+        if (status not in REDIRECT_STATUSES or not location
+                or not follows or hops >= MAX_REDIRECTS):
+            return status, hdrs, data
+        new_url = urllib.parse.urljoin(current_url, location)
+        if urllib.parse.urlsplit(new_url).hostname != parts.hostname:
+            current_headers = {
+                k: v for k, v in current_headers.items()
+                if k.lower() != "authorization"
+            }
+        current_url = new_url
+        hops += 1
 
 
 def token_url(repo: str, registry: str = REGISTRY) -> str:
