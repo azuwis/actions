@@ -100,9 +100,10 @@ def http_request(method, url, headers=None, body=None, timeout=30.0,
     `body` may be bytes or a seekable file object (streamed, with
     Content-Length set by the caller; re-seek(0) before every attempt so a
     retried PUT replays the file).  Retries `retries` times on transport
-    errors and on HTTP 5xx responses — curl `--retry 3 --retry-all-errors`
-    semantics (one shared retry budget); a persistent failure returns
-    (0, [], b'') for transport errors and the final status otherwise.
+    errors and on HTTP 408/429/5xx responses — curl `--retry 3
+    --retry-all-errors` semantics (one shared retry budget); a persistent
+    failure returns (0, [], b'') for transport errors and the final status
+    otherwise.
     """
     parts = urllib.parse.urlsplit(url)
     path = parts.path or "/"
@@ -121,7 +122,7 @@ def http_request(method, url, headers=None, body=None, timeout=30.0,
             status = resp.status
             hdrs = resp.getheaders()
             conn.close()
-            if status >= 500 and attempt < retries:
+            if (status >= 500 or status in (408, 429)) and attempt < retries:
                 attempt += 1
                 time.sleep(retry_delay)
                 continue

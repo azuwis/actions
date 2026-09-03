@@ -309,6 +309,20 @@ class HttpRequestTest(unittest.TestCase):
         self.assertEqual(status, 500)
         self.assertEqual(len(conns), 4)  # curl --retry 3 -> 4 attempts
 
+    def test_408_and_429_retried_then_success(self):
+        # curl --retry-all-errors retries 408/429 as well (like 5xx)
+        (status, _, body), conns = self.run_request(
+            [_FakeResponse(429), _FakeResponse(408), _FakeResponse(200, b"ok")],
+            retries=3)
+        self.assertEqual((status, body), (200, b"ok"))
+        self.assertEqual(len(conns), 3)
+
+    def test_429_exhausts_budget_like_5xx(self):
+        (status, _, _), conns = self.run_request(
+            [_FakeResponse(429)] * 4, retries=3)
+        self.assertEqual(status, 429)
+        self.assertEqual(len(conns), 4)
+
     def test_4xx_not_retried(self):
         (status, _, _), conns = self.run_request([_FakeResponse(403)], retries=3)
         self.assertEqual(status, 403)
