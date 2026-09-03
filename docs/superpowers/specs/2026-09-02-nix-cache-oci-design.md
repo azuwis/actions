@@ -218,9 +218,9 @@ docs/superpowers/specs/2026-09-02-nix-cache-oci-design.md
 
 ## 验证
 
-在 `.github/workflows/nix.yml` 增加两个 job（沿用现有"先构建、再验证"模式）：
+新建 `.github/workflows/nix-cache.yml` 存放两个验证 job（独立 trigger `nix/cache/**` + `workflow_dispatch`，与 30-job 大矩阵解耦；沿用现有"先构建、再验证"模式）：
 
-1. `nix_cache`（`needs: clear_cache`，`if: ${{ always() && !failure() && !cancelled() }}`
+1. `nix_cache`（`if: ${{ always() && !failure() && !cancelled() }}`，本工作流无 clear_cache，故无 needs
    + fork 守卫——fork PR 的 token 只读，push 必失败，两个 job 均跳过；
    job 级 `permissions: contents: read` + `packages: write`——job 级 permissions
    未声明的作用域**无权限**，缺 `contents: read` 连 checkout 都会 403）。

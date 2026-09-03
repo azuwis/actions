@@ -1053,7 +1053,8 @@ git commit -m "nix/cache/post: add push action (GHCR OCI upload + index merge)"
 ### Task 5: CI 验证工作流
 
 **Files:**
-- Modify: `.github/workflows/nix.yml`
+- Create: `.github/workflows/nix-cache.yml`（从 nix.yml 剥离；nix.yml 恢复原状）
+- Modify: `.github/workflows/nix.yml`（删除两个缓存验证 job）
 
 **Interfaces:**
 - Consumes: Tasks 1-4 的全部 Action。
@@ -1202,7 +1203,7 @@ git commit -m "nix/cache/post: add push action (GHCR OCI upload + index merge)"
 - [ ] **Step 3: 语法检查**
 
 ```bash
-python3 -c 'import yaml, sys; yaml.safe_load(open(".github/workflows/nix.yml")); print("yaml ok")' 2>/dev/null \
+python3 -c 'import yaml, sys; yaml.safe_load(open(".github/workflows/nix-cache.yml")); print("yaml ok")' 2>/dev/null \
   || echo "skipped (PyYAML not available; GitHub will parse on push)"
 ```
 
