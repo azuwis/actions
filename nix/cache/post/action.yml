@@ -22,4 +22,4 @@ runs:
         INPUT_TOKEN: ${{ inputs.token }}
         INPUT_SIGNING_KEY: ${{ inputs.signing_key }}
         INPUT_PATHS: ${{ inputs.paths }}
-      run: exec ${{ github.action_path }}/push.sh
+      run: exec python3 ${{ github.action_path }}/push.py
