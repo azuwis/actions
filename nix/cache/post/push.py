@@ -960,7 +960,7 @@ def main(env=None) -> None:
     cfg = config_from_env(os.environ if env is None else env)
     work_dir = os.path.join(cfg["runner_temp"] or "/tmp", "nixcache-work")
     cache_dir = os.path.join(work_dir, "cache")
-    nar_xz = str(Path(__file__).resolve().parent.parent / "nar_xz.py")
+    nar_xz = str(Path(__file__).resolve().parent / "nar_xz.py")
 
     print(f"::add-mask::{cfg['token']}")
     os.makedirs(work_dir, exist_ok=True)

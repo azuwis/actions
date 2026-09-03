@@ -142,7 +142,7 @@ store 路径；`--` 分隔 + 逐一校验 `/nix/store/<32hex>-*` 前缀，防参
    - 多余候选（未入 index、无外部签名）= 本轮上传集。
 7. **导出与计算**（顺序执行；工作目录 `$RUNNER_TEMP/nixcache-work`，`df` 预检剩余
    空间 ≥ 预计量，每路径完成后删除 nar 文件）：
-   - `nix-store --dump <path> | python3 nix/cache/nar_xz.py > <hash>.nar.xz`
+   - `nix-store --dump <path> | python3 nix/cache/post/nar_xz.py > <hash>.nar.xz`
      （stdlib `lzma`，preset=1，**FORMAT_XZ** —— 流式压缩，不整文件进内存；
      写死 `FORMAT_XZ` 也不依赖 `xz` 二进制，Linux/macOS 通用）；
    - FileHash：`nix hash file --type sha256 --base32 <nar.xz>`（Nix-base32；降级链：
@@ -198,7 +198,7 @@ store 路径；`--` 分隔 + 逐一校验 `/nix/store/<32hex>-*` 前缀，防参
 ```
 nix/cache/action.yml
 nix/cache/cache.sh           # pull 脚本（单模式执行体）
-nix/cache/nar_xz.py          # lzma 流式压缩器（stdin→stdout，FORMAT_XZ, preset 1）
+nix/cache/post/nar_xz.py          # lzma 流式压缩器（stdin→stdout，FORMAT_XZ, preset 1）
 nix/cache/nixcache-proxy.py  # vendored
 nix/cache/post/action.yml
 nix/cache/post/push.py

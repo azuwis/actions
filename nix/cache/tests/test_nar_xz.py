@@ -4,7 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 
-NAR_XZ = Path(__file__).resolve().parents[1] / "nar_xz.py"
+NAR_XZ = Path(__file__).resolve().parents[1] / "post" / "nar_xz.py"
 
 
 def compress(data: bytes) -> bytes:
