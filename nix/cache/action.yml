@@ -6,6 +6,9 @@ inputs:
   token:
     description: "GitHub token for pulling a private cache (scopes: packages: read)"
     default: ${{ github.token }}
+  port:
+    description: "Port for the local cache proxy (default: 37515). If the port is already in use, the substituter configuration is skipped (upstream proxy default; no conflict handling)"
+    default: "37515"
   public_key:
     description: Local trust anchor. Cache signing public key (name:base64). Leave empty for unsigned mode (require-sigs = false)
     default: ""
@@ -17,5 +20,6 @@ runs:
       env:
         INPUT_REPO: ${{ inputs.repo }}
         INPUT_TOKEN: ${{ inputs.token }}
+        INPUT_PORT: ${{ inputs.port }}
         INPUT_PUBLIC_KEY: ${{ inputs.public_key }}
       run: exec ${{ github.action_path }}/cache.sh

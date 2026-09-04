@@ -18,8 +18,11 @@ if ! python3 -c 'import sys; assert sys.version_info >= (3, 10)' 2>/dev/null; th
   exit 1
 fi
 
-# free port per run; don't race for the proxy default 37515
-PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+PORT="${INPUT_PORT:-37515}"  # upstream proxy default
+if ! [[ "$PORT" =~ ^[1-9][0-9]{0,4}$ ]] || (( PORT > 65535 )); then
+  echo "::error::nix/cache: invalid port: '$PORT' (expected 1-65535)"
+  exit 1
+fi
 
 INDEX_DIR="$RUNNER_TEMP/nixcache-proxy"
 mkdir -p "$INDEX_DIR"
