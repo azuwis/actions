@@ -11,9 +11,10 @@ The flow is exception-driven: `SkipRound` warns and exits 0 (empty round,
 signing failure, HTTP failures); `SkipPath` skips one store path; `NixError`
 wraps a failed `nix` command and call sites decide skip vs `Fatal`.
 
-Environment: NIXCACHE_REPO / NIXCACHE_SIGNING_KEY / NIXCACHE_PATHS (action
-inputs), GITHUB_TOKEN (runner-provided), RUNNER_TEMP.  Diagnostics go to
-stderr; ::add-mask:: goes to stdout.
+Environment: NIXCACHE_REPO (from nix/cache via GITHUB_ENV),
+NIXCACHE_SIGNING_KEY / NIXCACHE_PATHS (action inputs), GITHUB_TOKEN
+(runner-provided), RUNNER_TEMP.  Diagnostics go to stderr; ::add-mask:: goes
+to stdout.
 """
 import base64
 import hashlib
