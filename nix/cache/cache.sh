@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NIXCACHE_REPO="$(printf '%s' "$NIXCACHE_REPO" | tr '[:upper:]' '[:lower:]')"
 PROXY_PID=""
 READY=0
@@ -12,7 +11,7 @@ chmod 700 "$INDEX_DIR"
 # empty => no upstream fallback (Nix queries cache.nixos.org itself in parallel)
 NIXCACHE_UPSTREAM="" \
   NIXCACHE_INDEX_DIR="$INDEX_DIR" \
-  python3 "$SCRIPT_DIR/nixcache-proxy.py" >"$INDEX_DIR/proxy.log" 2>&1 &
+  python3 "$GITHUB_ACTION_PATH/nixcache-proxy.py" >"$INDEX_DIR/proxy.log" 2>&1 &
 PROXY_PID=$!
 
 if kill -0 "$PROXY_PID" 2>/dev/null &&
