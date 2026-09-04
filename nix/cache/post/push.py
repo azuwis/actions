@@ -12,9 +12,8 @@ signing failure, HTTP failures); `SkipPath` skips one store path; `NixError`
 wraps a failed `nix` command and call sites decide skip vs `Fatal`.
 
 Environment: NIXCACHE_REPO / NIXCACHE_TOKEN / NIXCACHE_SIGNING_KEY /
-NIXCACHE_PATHS (action inputs), NIXCACHE_PROXY_PID (from nix/cache),
-RUNNER_TEMP / RUNNER_OS / HOME.  Diagnostics go to stderr; ::add-mask:: goes
-to stdout.
+NIXCACHE_PATHS (action inputs), RUNNER_TEMP.  Diagnostics go to stderr;
+::add-mask:: goes to stdout.
 """
 import base64
 import hashlib
@@ -24,7 +23,6 @@ import lzma
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -56,10 +54,6 @@ READBACK_TRIES = 30
 READBACK_SLEEP = 2
 REDIRECT_STATUSES = (301, 302, 303, 307, 308)
 MAX_REDIRECTS = 5
-
-PROXY_MARKER = "nixcache-proxy.py"
-NIX_CONF_BEGIN = "# nix-cache begin"
-NIX_CONF_END = "# nix-cache end"
 
 
 # ------------------------------------------------------------ control flow
@@ -565,58 +559,6 @@ def layer_digest(manifest_body) -> str:
     return ""
 
 
-# ------------------------------------------------------------------ cleanup
-
-def cleanup(proxy_pid: str, runner_os: str, work_dir: str, home: str) -> None:
-    """Kill our proxy, strip nix.conf marker blocks, best-effort daemon
-    restart, remove the work directory.  Executed after every round,
-    success or failure, like a shell EXIT trap; never raises."""
-
-    def best_effort(cmd):
-        """Run a command ignoring failures; None if it could not be spawned."""
-        try:
-            return subprocess.run(cmd, stderr=subprocess.DEVNULL)
-        except OSError:
-            return None
-
-    if proxy_pid:
-        alive = False
-        try:
-            os.kill(int(proxy_pid), 0)
-            alive = True
-        except (OSError, ValueError):
-            alive = False
-        if alive:
-            try:
-                p = subprocess.run(["ps", "-p", proxy_pid, "-o", "command="],
-                                   capture_output=True, text=True)
-            except OSError:
-                p = None
-            if p is not None and PROXY_MARKER in (p.stdout or ""):
-                try:
-                    os.kill(int(proxy_pid), signal.SIGTERM)
-                except OSError:
-                    pass
-            else:
-                warn(f"PID {proxy_pid} is not our proxy; not killing")
-    for conf, sudo in ((f"/etc/nix/nix.conf", True),
-                       (f"{home}/.config/nix/nix.conf", False)):
-        if os.path.exists(conf):
-            cmd = ["sudo"] if sudo else []
-            best_effort(cmd + ["sed", "-i.bak",
-                               f"/^{NIX_CONF_BEGIN}$/,/^{NIX_CONF_END}$/d",
-                               conf])
-            best_effort(cmd + ["rm", "-f", conf + ".bak"])
-    if os.path.exists("/nix/var/nix/daemon-socket"):
-        if runner_os == "macOS":
-            plist = "/Library/LaunchDaemons/org.nixos.nix-daemon.plist"
-            best_effort(["sudo", "launchctl", "unload", plist])
-            best_effort(["sudo", "launchctl", "load", "-w", plist])
-        else:
-            best_effort(["sudo", "systemctl", "restart", "nix-daemon"])
-    shutil.rmtree(work_dir, ignore_errors=True)
-
-
 # --------------------------------------------------------------------- flow
 
 def fetch_existing_index(token: str, repo: str) -> dict:
@@ -839,10 +781,7 @@ class Config:
     token: str
     signing_key: str
     paths_input: str
-    proxy_pid: str
     runner_temp: str
-    runner_os: str
-    home: str
 
     @classmethod
     def from_env(cls, env: dict) -> "Config":
@@ -851,10 +790,7 @@ class Config:
             token=env.get("NIXCACHE_TOKEN") or "",
             signing_key=env.get("NIXCACHE_SIGNING_KEY") or "",
             paths_input=env.get("NIXCACHE_PATHS") or "",
-            proxy_pid=env.get("NIXCACHE_PROXY_PID") or "",
             runner_temp=env.get("RUNNER_TEMP") or "",
-            runner_os=env.get("RUNNER_OS") or "",
-            home=env.get("HOME") or "",
         )
 
 
@@ -897,9 +833,6 @@ def main(env=None) -> None:
               f"(found {sys.version_info.major}.{sys.version_info.minor})",
               file=sys.stderr)
         sys.exit(1)
-    # map SIGTERM to SystemExit so the finally-cleanup runs (exit 143);
-    # SIGINT already arrives as KeyboardInterrupt inside the try.
-    signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
     config = Config.from_env(os.environ if env is None else env)
     work_dir = os.path.join(config.runner_temp or "/tmp", "nixcache-work")
     cache_dir = os.path.join(work_dir, "cache")
@@ -924,8 +857,6 @@ def main(env=None) -> None:
     except NixError as e:
         print(f"::error::{e}", file=sys.stderr)
         sys.exit(1)
-    finally:
-        cleanup(config.proxy_pid, config.runner_os, work_dir, config.home)
 
 
 if __name__ == "__main__":

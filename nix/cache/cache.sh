@@ -121,9 +121,7 @@ require-sigs = false"
   fi
 fi
 
-# state for nix/cache/post
 {
   echo "NIXCACHE_REPO=$NIXCACHE_REPO"
   echo "NIXCACHE_PORT=$NIXCACHE_PORT"
-  echo "NIXCACHE_PROXY_PID=$PROXY_PID"
 } >>"$GITHUB_ENV"
