@@ -18,8 +18,8 @@ runs:
     - name: Start OCI cache proxy and configure substituter
       shell: bash
       env:
-        INPUT_REPO: ${{ inputs.repo }}
-        INPUT_TOKEN: ${{ inputs.token }}
-        INPUT_PORT: ${{ inputs.port }}
-        INPUT_PUBLIC_KEY: ${{ inputs.public_key }}
+        NIXCACHE_REPO: ${{ inputs.repo }}
+        NIXCACHE_PORT: ${{ inputs.port }}
+        NIXCACHE_PUBLIC_KEY: ${{ inputs.public_key }}
+        GITHUB_TOKEN: ${{ inputs.token }}
       run: exec ${{ github.action_path }}/cache.sh

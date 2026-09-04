@@ -2,15 +2,11 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="${INPUT_REPO:-$GITHUB_REPOSITORY}"
-REPO="$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')"
-TOKEN="${INPUT_TOKEN:-$GITHUB_TOKEN}"
-PUBLIC_KEY="${INPUT_PUBLIC_KEY:-}"
+NIXCACHE_REPO="$(printf '%s' "$NIXCACHE_REPO" | tr '[:upper:]' '[:lower:]')"
 PROXY_PID=""
-PORT=""
 READY=0
 
-echo "::add-mask::${TOKEN}"
+echo "::add-mask::${GITHUB_TOKEN}"
 
 # vendored proxy uses PEP 604 unions => Python >= 3.10
 if ! python3 -c 'import sys; assert sys.version_info >= (3, 10)' 2>/dev/null; then
@@ -18,36 +14,33 @@ if ! python3 -c 'import sys; assert sys.version_info >= (3, 10)' 2>/dev/null; th
   exit 1
 fi
 
-PORT="${INPUT_PORT:-37515}"  # upstream proxy default
-if ! [[ "$PORT" =~ ^[1-9][0-9]{0,4}$ ]] || (( PORT > 65535 )); then
-  echo "::error::nix/cache: invalid port: '$PORT' (expected 1-65535)"
+if ! [[ "$NIXCACHE_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || (( NIXCACHE_PORT > 65535 )); then
+  echo "::error::nix/cache: invalid port: '$NIXCACHE_PORT' (expected 1-65535)"
   exit 1
 fi
 
 INDEX_DIR="$RUNNER_TEMP/nixcache-proxy"
 mkdir -p "$INDEX_DIR"
 chmod 700 "$INDEX_DIR"
-NIXCACHE_REPO="$REPO" \
-NIXCACHE_PORT="$PORT" \
+# empty => no upstream fallback (Nix queries cache.nixos.org itself in parallel)
 NIXCACHE_UPSTREAM="" \
 NIXCACHE_INDEX_DIR="$INDEX_DIR" \
-GITHUB_TOKEN="$TOKEN" \
   python3 "$SCRIPT_DIR/nixcache-proxy.py" >"$INDEX_DIR/proxy.log" 2>&1 &
 PROXY_PID=$!
 
 if kill -0 "$PROXY_PID" 2>/dev/null \
   && curl -fs --max-time 2 --retry 15 --retry-delay 1 --retry-connrefused \
-      -o /dev/null "http://127.0.0.1:$PORT/nix-cache-info" 2>/dev/null; then
+      -o /dev/null "http://127.0.0.1:$NIXCACHE_PORT/nix-cache-info" 2>/dev/null; then
   READY=1
 fi
 if [ "$READY" = 1 ]; then
   # 60s cap: cold start blocks on the index prefetch lock
-  STATUS_REPO="$(curl -fs --max-time 60 "http://127.0.0.1:$PORT/_status" 2>/dev/null | jq -r '.repo // empty' 2>/dev/null || true)"
-  if [ -n "$STATUS_REPO" ] && [ "$STATUS_REPO" != "$REPO" ]; then
-    echo "::warning::proxy identity mismatch (serves repo=$STATUS_REPO, expected=$REPO); not configuring substituter"
+  STATUS_REPO="$(curl -fs --max-time 60 "http://127.0.0.1:$NIXCACHE_PORT/_status" 2>/dev/null | jq -r '.repo // empty' 2>/dev/null || true)"
+  if [ -n "$STATUS_REPO" ] && [ "$STATUS_REPO" != "$NIXCACHE_REPO" ]; then
+    echo "::warning::proxy identity mismatch (serves repo=$STATUS_REPO, expected=$NIXCACHE_REPO); not configuring substituter"
     READY=0
   elif [ -z "$STATUS_REPO" ]; then
-    echo "::warning::proxy status check failed (port $PORT)"
+    echo "::warning::proxy status check failed (port $NIXCACHE_PORT)"
     READY=0
   fi
 fi
@@ -64,15 +57,15 @@ warn() {
 }
 
 if [ "$READY" = 1 ]; then
-  BLOCK="extra-substituters = http://127.0.0.1:$PORT
-extra-trusted-substituters = http://127.0.0.1:$PORT"
-  if [ -n "$PUBLIC_KEY" ]; then
-    IDX_KEY="$(curl -fs --max-time 10 "http://127.0.0.1:$PORT/public-key" 2>/dev/null | tr -d '\n' || true)"
-    if [ -n "$IDX_KEY" ] && [ "$IDX_KEY" != "$PUBLIC_KEY" ]; then
+  BLOCK="extra-substituters = http://127.0.0.1:$NIXCACHE_PORT
+extra-trusted-substituters = http://127.0.0.1:$NIXCACHE_PORT"
+  if [ -n "$NIXCACHE_PUBLIC_KEY" ]; then
+    IDX_KEY="$(curl -fs --max-time 10 "http://127.0.0.1:$NIXCACHE_PORT/public-key" 2>/dev/null | tr -d '\n' || true)"
+    if [ -n "$IDX_KEY" ] && [ "$IDX_KEY" != "$NIXCACHE_PUBLIC_KEY" ]; then
       echo "::warning::index advertises a different public key than the public_key input; trusting the local input"
     fi
     BLOCK="$BLOCK
-extra-trusted-public-keys = $PUBLIC_KEY"
+extra-trusted-public-keys = $NIXCACHE_PUBLIC_KEY"
   else
     warn "no public_key input: adding require-sigs = false (disables signature verification for ALL substituters)"
     BLOCK="$BLOCK
@@ -118,19 +111,19 @@ require-sigs = false"
     esac
   fi
 
-  if nix show-config 2>/dev/null | grep -q "127.0.0.1:$PORT"; then
+  if nix show-config 2>/dev/null | grep -q "127.0.0.1:$NIXCACHE_PORT"; then
     echo "::group::nix/cache"
-    echo "OCI substituter configured: http://127.0.0.1:$PORT (repo=$REPO)"
-    [ -n "$PUBLIC_KEY" ] || echo "unsigned mode: require-sigs = false"
+    echo "OCI substituter configured: http://127.0.0.1:$NIXCACHE_PORT (repo=$NIXCACHE_REPO)"
+    [ -n "$NIXCACHE_PUBLIC_KEY" ] || echo "unsigned mode: require-sigs = false"
     echo "::endgroup::"
   else
-    warn "nix does not report the cache substituter (port $PORT); check nix.conf and daemon restart"
+    warn "nix does not report the cache substituter (port $NIXCACHE_PORT); check nix.conf and daemon restart"
   fi
 fi
 
 # state for nix/cache/post
 {
-  echo "NIXCACHE_REPO=$REPO"
-  echo "NIXCACHE_PORT=$PORT"
+  echo "NIXCACHE_REPO=$NIXCACHE_REPO"
+  echo "NIXCACHE_PORT=$NIXCACHE_PORT"
   echo "NIXCACHE_PROXY_PID=$PROXY_PID"
 } >>"$GITHUB_ENV"
