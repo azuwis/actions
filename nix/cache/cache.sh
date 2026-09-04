@@ -66,18 +66,13 @@ if [ "$READY" != 1 ]; then
   fi
 fi
 
-# 5. write PID file + warn-to-summary helper
+# 5. write PID file + warn helper
 printf '%s\n' "$PROXY_PID" >"$INDEX_DIR/proxy.pid"
 echo "$REPO" >"$INDEX_DIR/repo"   # 供验证 job 使用
 echo "$PORT" >"$INDEX_DIR/port"
 
-warn_to_summary() { # message
+warn() { # message
   echo "::warning::$1"
-  {
-    echo "## nix/cache"
-    echo ""
-    echo "> $1"
-  } >>"${GITHUB_STEP_SUMMARY:-/dev/null}" 2>/dev/null || true
 }
 # 6. idempotent marker block in nix.conf (daemon config + user config)
 if [ "$READY" = 1 ]; then
@@ -91,7 +86,7 @@ extra-trusted-substituters = http://127.0.0.1:$PORT"
     BLOCK="$BLOCK
 extra-trusted-public-keys = $PUBLIC_KEY"
   else
-    warn_to_summary "no public_key input: adding require-sigs = false (disables signature verification for ALL substituters)"
+    warn "no public_key input: adding require-sigs = false (disables signature verification for ALL substituters)"
     BLOCK="$BLOCK
 require-sigs = false"
   fi
@@ -108,7 +103,7 @@ require-sigs = false"
     "${sudo_cmd[@]}" sed -i.bak '/^# nix-cache begin$/,/^# nix-cache end$/d' "$file" 2>/dev/null || true
     "${sudo_cmd[@]}" rm -f "$file.bak" 2>/dev/null || true
     if ! printf '\n# nix-cache begin\n%s\n# nix-cache end\n' "$BLOCK" | "${sudo_cmd[@]}" tee -a "$file" >/dev/null; then
-      warn_to_summary "failed to write $file (nix.conf marker block)"
+      warn "failed to write $file (nix.conf marker block)"
     fi
   }
 
@@ -117,7 +112,7 @@ require-sigs = false"
     [ -e /etc/nix/nix.conf ] || sudo touch /etc/nix/nix.conf
     apply_config /etc/nix/nix.conf 1
   else
-    warn_to_summary "no nix daemon socket found; configuring user-level nix.conf only"
+    warn "no nix daemon socket found; configuring user-level nix.conf only"
   fi
   apply_config "${HOME}/.config/nix/nix.conf" 0
 
@@ -130,7 +125,7 @@ require-sigs = false"
       ;;
     *)
       if ! sudo systemctl restart nix-daemon 2>/dev/null; then
-        warn_to_summary "failed to restart nix-daemon; substituter config may not be effective"
+        warn "failed to restart nix-daemon; substituter config may not be effective"
       fi
       ;;
     esac
@@ -143,7 +138,7 @@ require-sigs = false"
     [ -n "$PUBLIC_KEY" ] || echo "unsigned mode: require-sigs = false"
     echo "::endgroup::"
   else
-    warn_to_summary "nix does not report the cache substituter (port $PORT); check nix.conf and daemon restart"
+    warn "nix does not report the cache substituter (port $PORT); check nix.conf and daemon restart"
   fi
 fi
 
