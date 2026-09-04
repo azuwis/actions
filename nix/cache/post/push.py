@@ -559,18 +559,17 @@ def filter_paths(rows, known_entries, own_key_name):
 
 # ------------------------------------------------------------- index merge
 
-def parse_existing(text: str) -> dict:
-    """Existing cache index JSON; a corrupt/empty blob is treated as empty."""
+def load_existing_index(data) -> dict:
+    """Parse the downloaded cache-index blob (strict: mirroring the old
+    per-step `json.load` check, a corrupt index is an error, not empty)."""
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def load_existing(path: str) -> dict:
-    with open(path) as f:
-        return parse_existing(f.read())
+        index = json.loads(data)
+    except ValueError:
+        index = None
+    if not isinstance(index, dict):
+        print("::error::failed to parse existing cache index", file=sys.stderr)
+        sys.exit(1)
+    return index
 
 
 def merge_index(existing: dict, new_entries: dict, pubkey: str,
@@ -646,13 +645,10 @@ def cleanup(proxy_pid: str, runner_os: str, work_dir: str, home: str) -> None:
 
 # ------------------------------------------------------------ step functions
 
-def step_fetch_existing_index(oci_token: str, repo: str, work_dir: str) -> str:
+def fetch_existing_index(oci_token: str, repo: str) -> dict:
     """Fetch/parse the existing cache-index manifest + index blob.
-    Returns the path to the existing-index file; exits 0 (skip round) on
-    manifest/blob fetch failure."""
-    idx_file = os.path.join(work_dir, "existing-index.json")
-    with open(idx_file, "w") as f:
-        f.write("{}\n")
+    Returns the index dict (`{}` for an empty index); exits 0 (skip round) on
+    manifest/blob fetch failure, exits 1 on a corrupt index."""
     st, body = fetch_manifest("cache-index", oci_token, repo)
     if st == 200:
         idx_digest = layer_digest(body)
@@ -665,29 +661,20 @@ def step_fetch_existing_index(oci_token: str, repo: str, work_dir: str) -> str:
                 warn(f"failed to download existing cache-index blob (HTTP {st}); "
                      "skipping upload")
                 sys.exit(0)
-            with open(idx_file, "wb") as f:
-                f.write(data)
-    elif st == 404:
-        pass                                # 404 = empty index
-    else:
-        sys.exit(0)                         # warning printed by fetch_manifest
-    return idx_file
+            return load_existing_index(data)
+        return {}
+    if st == 404:
+        return {}                           # 404 = empty index
+    sys.exit(0)                             # warning printed by fetch_manifest
 
 
-def index_public_key(idx_file: str) -> str:
+def index_public_key(index: dict) -> str:
     """`.public_key // ""` over the existing index (non-string scalars are
     rendered as text; invalid JSON -> "")."""
-    try:
-        with open(idx_file) as f:
-            data = json.load(f)
-    except (ValueError, OSError):
+    v = index.get("public_key", "")
+    if v is None:
         return ""
-    if isinstance(data, dict):
-        v = data.get("public_key", "")
-        if v is None:
-            return ""
-        return v if isinstance(v, str) else str(v)
-    return ""
+    return v if isinstance(v, str) else str(v)
 
 
 def step_signing_setup(signing_key: str, idx_pubkey, work_dir: str):
@@ -744,7 +731,7 @@ def step_collect_candidates(paths_input: str):
     return store_scan_candidates()
 
 
-def step_filter_candidates(cand, idx_file: str, own_key_name: str):
+def step_filter_candidates(cand, index: dict, own_key_name: str):
     """path-info -> filters (exits on signing failure / empty).  Returns
     (keep, info_by_path): the keep list plus the path-info dict per kept
     path, reused by the export step so no second `nix path-info` pass runs."""
@@ -761,18 +748,11 @@ def step_filter_candidates(cand, idx_file: str, own_key_name: str):
         for path, info in path_info_items(data):
             rows.append((path, list(info.get("signatures", []) or [])))
             info_by_path[path] = info
-    try:
-        with open(idx_file) as f:
-            index = json.load(f)
-        if not isinstance(index, dict):
-            raise ValueError("not a JSON object")
-        entries = index.get("entries") or {}
-        if not isinstance(entries, dict):
-            raise ValueError("entries is not a JSON object")
-        known = set(entries.keys())
-    except (ValueError, OSError):
+    entries = index.get("entries") or {}
+    if not isinstance(entries, dict):
         print("::error::failed to parse existing cache index", file=sys.stderr)
         sys.exit(1)
+    known = set(entries.keys())
     keep, missing = filter_paths(rows, known, own_key_name)
     if missing:
         print(f"::error::signing failed for: {', '.join(missing)}", file=sys.stderr)
@@ -843,10 +823,9 @@ def step_export_upload(paths, info_by_path: dict, oci_token: str, repo: str,
     return uploaded, skipped, new_entries
 
 
-def step_rebuild_index(work_dir: str, idx_file: str, new_entries: dict,
+def step_rebuild_index(work_dir: str, existing: dict, new_entries: dict,
                        own_key: str, repo: str, generated: str) -> dict:
     """Merge new entries into the cache index and write cache-index.json."""
-    existing = load_existing(idx_file)
     index = merge_index(existing, new_entries, own_key, repo, REGISTRY, generated)
     index_json = os.path.join(work_dir, "cache-index.json")
     with open(index_json, "w") as f:
@@ -910,11 +889,6 @@ def layer_digest(manifest_body) -> str:
     return ""
 
 
-def write_summary(uploaded: int, skipped: int, entries: int) -> None:
-    notice(f"nix/cache: uploaded {uploaded}, skipped {skipped}, "
-           f"index entries {entries}")
-
-
 # --------------------------------------------------------------------- main
 
 def config_from_env(env) -> dict:
@@ -957,8 +931,8 @@ def main(env=None) -> None:
 
     try:
         oci_token = oci_get_token(cfg["repo"], cfg["token"])
-        idx_file = step_fetch_existing_index(oci_token, cfg["repo"], work_dir)
-        idx_pubkey = index_public_key(idx_file)
+        existing = fetch_existing_index(oci_token, cfg["repo"])
+        idx_pubkey = index_public_key(existing)
         own_key, own_key_name = step_signing_setup(
             cfg["signing_key"], idx_pubkey, work_dir)
         cand = step_collect_candidates(cfg["paths_input"])
@@ -971,7 +945,7 @@ def main(env=None) -> None:
                 print("::error::nix store sign failed", file=sys.stderr)
                 sys.exit(1)
             print("::endgroup::", file=sys.stderr)
-        keep, info_by_path = step_filter_candidates(cand, idx_file, own_key_name)
+        keep, info_by_path = step_filter_candidates(cand, existing, own_key_name)
         if not keep:
             print("Nothing to upload")
             sys.exit(0)
@@ -982,13 +956,14 @@ def main(env=None) -> None:
         if uploaded == 0:
             print("Nothing new to upload")
             sys.exit(0)
-        index = step_rebuild_index(work_dir, idx_file, new_entries,
+        index = step_rebuild_index(work_dir, existing, new_entries,
                                    own_key, cfg["repo"], generated)
         index_digest = step_push_index(
             os.path.join(work_dir, "cache-index.json"), oci_token,
             cfg["repo"], work_dir)
         verify_readback(oci_token, cfg["repo"], index_digest)
-        write_summary(uploaded, skipped, len(index["entries"]))
+        notice(f"nix/cache: uploaded {uploaded}, skipped {skipped}, "
+               f"index entries {len(index['entries'])}")
     finally:
         cleanup(cfg["proxy_pid"], cfg["runner_os"], work_dir, cfg["home"])
 

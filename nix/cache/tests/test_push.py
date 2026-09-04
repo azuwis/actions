@@ -194,15 +194,17 @@ class MergeIndexTest(unittest.TestCase):
         index = push.merge_index(existing, {}, "new-key", "r", "ghcr.io", "t")
         self.assertEqual(index["public_key"], "new-key")
 
-    def test_dirty_existing_json_tolerated(self):
-        self.assertEqual(push.parse_existing("not json"), {})
-        self.assertEqual(push.parse_existing("null"), {})
-        self.assertEqual(push.parse_existing("[1, 2]"), {})
-        new = {"a": "b"}
-        index = push.merge_index(push.parse_existing("{corrupt"), new, "", "r",
-                                 "ghcr.io", "t")
-        self.assertEqual(index["entries"], {"a": "b"})
-        self.assertEqual(index["public_key"], "")
+    def test_dirty_existing_json_rejected(self):
+        """Corrupt existing index is an error (exit 1), not silently empty."""
+        for blob in (b"not json", b"null", b"[1, 2]", b""):
+            with redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as cm:
+                    push.load_existing_index(blob)
+            self.assertEqual(cm.exception.code, 1)
+
+    def test_existing_index_loaded(self):
+        self.assertEqual(push.load_existing_index(b'{"public_key": "k"}'),
+                         {"public_key": "k"})
 
 
 class FailOrSkipTest(unittest.TestCase):

@@ -19,14 +19,7 @@ if ! python3 -c 'import sys; assert sys.version_info >= (3, 10)' 2>/dev/null; th
 fi
 
 # 2. always pick a free port (never race for 37515)
-PORT="$(python3 - <<'PY'
-import socket
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.bind(("127.0.0.1", 0))
-print(s.getsockname()[1])
-s.close()
-PY
-)"
+PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 
 # 3. start vendored proxy
 INDEX_DIR="$RUNNER_TEMP/nixcache-proxy"
@@ -66,11 +59,7 @@ if [ "$READY" != 1 ]; then
   fi
 fi
 
-# 5. write PID file + warn helper
-printf '%s\n' "$PROXY_PID" >"$INDEX_DIR/proxy.pid"
-echo "$REPO" >"$INDEX_DIR/repo"   # 供验证 job 使用
-echo "$PORT" >"$INDEX_DIR/port"
-
+# 5. warn helper
 warn() { # message
   echo "::warning::$1"
 }
