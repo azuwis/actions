@@ -5,13 +5,13 @@ Flow: OCI token exchange, candidate collection (paths mode or whole-store
 scan), filtering against the existing cache-index, export (`nix-store --dump`
 + in-process zstd/xz compression), OCI blob/manifest upload (HEAD fast-path,
 POST-init, PUT with digest query), cache-index merge, readback verification
-and GH Actions step summary.
+and a one-line summary annotation.
 
 Environment:
   INPUT_REPO / INPUT_TOKEN / INPUT_SIGNING_KEY / INPUT_PATHS  (action inputs)
   GITHUB_REPOSITORY / GITHUB_TOKEN                            (fallbacks)
   NIXCACHE_REPO / NIXCACHE_PORT / NIXCACHE_PROXY_PID           (from nix/cache)
-  RUNNER_TEMP / GITHUB_STEP_SUMMARY / RUNNER_OS / HOME
+  RUNNER_TEMP / RUNNER_OS / HOME
 
 Output discipline: all diagnostics (::warning::/::error::/::group::) go to
 stderr; ::add-mask:: goes to stdout; bulk data flows through files and return
@@ -66,6 +66,10 @@ NIX_CONF_END = "# nix-cache end"
 
 def warn(msg: str) -> None:
     print(f"::warning::{msg}", file=sys.stderr)
+
+
+def notice(msg: str) -> None:
+    print(f"::notice::{msg}", file=sys.stderr)
 
 
 # 401/403 (insufficient permission: fork PRs, missing packages:* perms)
@@ -906,19 +910,9 @@ def layer_digest(manifest_body) -> str:
     return ""
 
 
-def write_summary(summary_path: str, uploaded: int, skipped: int, entries: int) -> None:
-    print("::group::nix/cache summary", file=sys.stderr)
-    print(f"uploaded paths: {uploaded}", file=sys.stderr)
-    print(f"skipped paths: {skipped}", file=sys.stderr)
-    print(f"index entries: {entries}", file=sys.stderr)
-    print("::endgroup::", file=sys.stderr)
-    with open(summary_path or os.devnull, "a") as f:
-        f.write("## nix/cache push\n\n")
-        f.write("| Metric | Value |\n")
-        f.write("|---|---|\n")
-        f.write(f"| Paths uploaded | {uploaded} |\n")
-        f.write(f"| Paths skipped | {skipped} |\n")
-        f.write(f"| Index entries | {entries} |\n")
+def write_summary(uploaded: int, skipped: int, entries: int) -> None:
+    notice(f"nix/cache: uploaded {uploaded}, skipped {skipped}, "
+           f"index entries {entries}")
 
 
 # --------------------------------------------------------------------- main
@@ -932,7 +926,6 @@ def config_from_env(env) -> dict:
         "proxy_pid": env.get("NIXCACHE_PROXY_PID") or "",
         "runner_temp": env.get("RUNNER_TEMP") or "",
         "runner_os": env.get("RUNNER_OS") or "",
-        "summary": env.get("GITHUB_STEP_SUMMARY") or "",
         "home": env.get("HOME") or "",
     }
 
@@ -995,7 +988,7 @@ def main(env=None) -> None:
             os.path.join(work_dir, "cache-index.json"), oci_token,
             cfg["repo"], work_dir)
         verify_readback(oci_token, cfg["repo"], index_digest)
-        write_summary(cfg["summary"], uploaded, skipped, len(index["entries"]))
+        write_summary(uploaded, skipped, len(index["entries"]))
     finally:
         cleanup(cfg["proxy_pid"], cfg["runner_os"], work_dir, cfg["home"])
 
