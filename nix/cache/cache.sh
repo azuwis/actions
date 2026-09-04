@@ -6,31 +6,18 @@ NIXCACHE_REPO="$(printf '%s' "$NIXCACHE_REPO" | tr '[:upper:]' '[:lower:]')"
 PROXY_PID=""
 READY=0
 
-echo "::add-mask::${GITHUB_TOKEN}"
-
-# vendored proxy uses PEP 604 unions => Python >= 3.10
-if ! python3 -c 'import sys; assert sys.version_info >= (3, 10)' 2>/dev/null; then
-  echo "::error::nix/cache requires Python >= 3.10 (found: $(python3 --version 2>&1 || echo unknown))"
-  exit 1
-fi
-
-if ! [[ "$NIXCACHE_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || (( NIXCACHE_PORT > 65535 )); then
-  echo "::error::nix/cache: invalid port: '$NIXCACHE_PORT' (expected 1-65535)"
-  exit 1
-fi
-
 INDEX_DIR="$RUNNER_TEMP/nixcache-proxy"
 mkdir -p "$INDEX_DIR"
 chmod 700 "$INDEX_DIR"
 # empty => no upstream fallback (Nix queries cache.nixos.org itself in parallel)
 NIXCACHE_UPSTREAM="" \
-NIXCACHE_INDEX_DIR="$INDEX_DIR" \
+  NIXCACHE_INDEX_DIR="$INDEX_DIR" \
   python3 "$SCRIPT_DIR/nixcache-proxy.py" >"$INDEX_DIR/proxy.log" 2>&1 &
 PROXY_PID=$!
 
-if kill -0 "$PROXY_PID" 2>/dev/null \
-  && curl -fs --max-time 2 --retry 15 --retry-delay 1 --retry-connrefused \
-      -o /dev/null "http://127.0.0.1:$NIXCACHE_PORT/nix-cache-info" 2>/dev/null; then
+if kill -0 "$PROXY_PID" 2>/dev/null &&
+  curl -fs --max-time 2 --retry 15 --retry-delay 1 --retry-connrefused \
+    -o /dev/null "http://127.0.0.1:$NIXCACHE_PORT/nix-cache-info" 2>/dev/null; then
   READY=1
 fi
 if [ "$READY" = 1 ]; then

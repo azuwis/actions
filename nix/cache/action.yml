@@ -3,9 +3,6 @@ inputs:
   repo:
     description: GitHub owner/repo of the GHCR cache image (ghcr.io/<repo>/nix-cache); lowercase. Must not come from untrusted input (e.g. fork head repo)
     default: ${{ github.repository }}
-  token:
-    description: "GitHub token for pulling a private cache (scopes: packages: read)"
-    default: ${{ github.token }}
   port:
     description: "Port for the local cache proxy (default: 37515). If the port is already in use, the substituter configuration is skipped (upstream proxy default; no conflict handling)"
     default: "37515"
@@ -21,5 +18,4 @@ runs:
         NIXCACHE_REPO: ${{ inputs.repo }}
         NIXCACHE_PORT: ${{ inputs.port }}
         NIXCACHE_PUBLIC_KEY: ${{ inputs.public_key }}
-        GITHUB_TOKEN: ${{ inputs.token }}
       run: exec ${{ github.action_path }}/cache.sh

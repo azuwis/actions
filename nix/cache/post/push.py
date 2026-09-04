@@ -11,9 +11,9 @@ The flow is exception-driven: `SkipRound` warns and exits 0 (empty round,
 signing failure, HTTP failures); `SkipPath` skips one store path; `NixError`
 wraps a failed `nix` command and call sites decide skip vs `Fatal`.
 
-Environment: NIXCACHE_REPO / NIXCACHE_TOKEN / NIXCACHE_SIGNING_KEY /
-NIXCACHE_PATHS (action inputs), RUNNER_TEMP.  Diagnostics go to stderr;
-::add-mask:: goes to stdout.
+Environment: NIXCACHE_REPO / NIXCACHE_SIGNING_KEY / NIXCACHE_PATHS (action
+inputs), GITHUB_TOKEN (runner-provided), RUNNER_TEMP.  Diagnostics go to
+stderr; ::add-mask:: goes to stdout.
 """
 import base64
 import hashlib
@@ -787,7 +787,7 @@ class Config:
     def from_env(cls, env: dict) -> "Config":
         return cls(
             repo=(env.get("NIXCACHE_REPO") or "").lower(),
-            token=env.get("NIXCACHE_TOKEN") or "",
+            token=env.get("GITHUB_TOKEN") or "",
             signing_key=env.get("NIXCACHE_SIGNING_KEY") or "",
             paths_input=env.get("NIXCACHE_PATHS") or "",
             runner_temp=env.get("RUNNER_TEMP") or "",

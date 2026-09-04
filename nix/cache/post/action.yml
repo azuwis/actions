@@ -3,9 +3,6 @@ inputs:
   repo:
     description: GitHub owner/repo of the GHCR cache image (ghcr.io/<repo>/nix-cache); lowercase
     default: ${{ github.repository }}
-  token:
-    description: "GitHub token for pushing (needs job-level permissions: packages: write)"
-    default: ${{ github.token }}
   signing_key:
     description: Cache signing key contents (name:base64); required if the cache index is signed; leave empty for unsigned mode
     default: ""
@@ -19,7 +16,6 @@ runs:
       shell: bash
       env:
         NIXCACHE_REPO: ${{ inputs.repo }}
-        NIXCACHE_TOKEN: ${{ inputs.token }}
         NIXCACHE_SIGNING_KEY: ${{ inputs.signing_key }}
         NIXCACHE_PATHS: ${{ inputs.paths }}
       run: exec python3 ${{ github.action_path }}/push.py
