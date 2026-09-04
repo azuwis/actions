@@ -22,7 +22,6 @@ diagnostics (::warning::/::error::/::notice::/::group::) go to stderr;
 ::add-mask:: goes to stdout; bulk data flows through files and return values.
 """
 import base64
-import glob
 import hashlib
 import http.client
 import json
@@ -152,15 +151,12 @@ def nix_json(*args):
 
 
 def nix_file_hash(path: str) -> str:
-    """FileHash (bare nix-base32); falls back to the legacy nix-hash CLI."""
+    """FileHash (bare nix-base32); empty when unhashable (path skipped)."""
     try:
         return nix("hash", "file", "--type", "sha256", "--base32",
                    path).stdout.strip()
     except NixError:
-        p = subprocess.run(["nix-hash", "--flat", "--type", "sha256",
-                            "--base32", path], capture_output=True,
-                           text=True)
-        return p.stdout.strip() if p.returncode == 0 else ""
+        return ""
 
 
 def nix_key_public(secret: str) -> str:
@@ -223,19 +219,12 @@ def sign_paths(key_file: str, paths) -> None:
 
 
 def store_scan_candidates():
-    """Whole-store enumeration via `nix path-info --all`; on failure warn
-    and fall back to a glob scan of the store directory."""
-    paths = []
-    try:
-        data = nix_json("path-info", "--all", "--json", "--json-format", "1")
-        if isinstance(data, dict):
-            paths = list(data.keys())
-    except NixError:
-        pass
-    if paths:
-        return paths
-    warn("nix path-info --all failed; falling back to glob scan")
-    return [d.rstrip("/") for d in glob.glob("/nix/store/*/")]
+    """Whole-store enumeration via `nix path-info --all` (modern nix, like
+    the rest of this action)."""
+    data = nix_json("path-info", "--all", "--json", "--json-format", "1")
+    if isinstance(data, dict):
+        return list(data.keys())
+    raise Fatal("unexpected `nix path-info --all` output")
 
 
 # --------------------------------------------------------------------- HTTP
