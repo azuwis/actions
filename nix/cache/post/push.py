@@ -13,8 +13,7 @@ wraps a failed `nix` command and call sites decide skip vs `Fatal`.
 
 Environment: NIXCACHE_REPO (from nix/cache via GITHUB_ENV),
 NIXCACHE_SIGNING_KEY / NIXCACHE_PATHS (action inputs), GITHUB_TOKEN
-(runner-provided), RUNNER_TEMP.  Diagnostics go to stderr; ::add-mask:: goes
-to stdout.
+(runner-provided), RUNNER_TEMP.
 """
 import base64
 import hashlib
@@ -837,7 +836,6 @@ def main(env=None) -> None:
     config = Config.from_env(os.environ if env is None else env)
     work_dir = os.path.join(config.runner_temp or "/tmp", "nixcache-work")
     cache_dir = os.path.join(work_dir, "cache")
-    print(f"::add-mask::{config.token}")
     os.makedirs(work_dir, exist_ok=True)
     if not config.runner_temp:
         warn("RUNNER_TEMP unset; using /tmp")
