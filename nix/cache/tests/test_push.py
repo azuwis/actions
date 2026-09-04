@@ -9,6 +9,7 @@ import importlib.util
 import io
 import lzma
 import shutil
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -410,6 +411,18 @@ class RealNixTest(unittest.TestCase):
         text = push.make_narinfo(STORE, H32, 1, "f" * 52,
                                  {"narHash": SRI_ZERO, "narSize": 10})
         self.assertIn("NarHash: sha256:" + NIX32_ZERO, text)
+
+
+@unittest.skipUnless(shutil.which("nix-hash"), "nix-hash not on PATH")
+class RealNixHashTest(unittest.TestCase):
+    def test_flat_hash_is_bare_base32(self):
+        with tempfile.NamedTemporaryFile() as f:
+            f.write(b"hello nix-cache")
+            f.flush()
+            h = push.nix_file_hash(f.name)
+        self.assertEqual(len(h), 52)        # sha256 in nix-base32
+        self.assertNotIn("-", h)
+
 
 class CompressStreamTest(unittest.TestCase):
     """Compression used by dump_nar: zstd on Python >= 3.14, xz fallback."""

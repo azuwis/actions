@@ -151,12 +151,11 @@ def nix_json(*args):
 
 
 def nix_file_hash(path: str) -> str:
-    """FileHash (bare nix-base32); empty when unhashable (path skipped)."""
-    try:
-        return nix("hash", "file", "--type", "sha256", "--base32",
-                   path).stdout.strip()
-    except NixError:
-        return ""
+    """FileHash (bare nix-base32) via the stable legacy `nix-hash` CLI
+    (present in every Nix version); empty when unhashable (path skipped)."""
+    p = subprocess.run(["nix-hash", "--flat", "--type", "sha256", "--base32",
+                        path], capture_output=True, text=True)
+    return p.stdout.strip() if p.returncode == 0 else ""
 
 
 def nix_key_public(secret: str) -> str:
