@@ -10,7 +10,6 @@ import io
 import lzma
 import shutil
 import unittest
-from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
@@ -102,30 +101,26 @@ class MakeNarinfoTest(unittest.TestCase):
     def test_nar_size_zero_skips(self):
         info = dict(self.info)
         info["narSize"] = 0
-        err = io.StringIO()
-        with redirect_stderr(err):
-            with self.assertRaises(push.NarinfoSkip) as cm:
-                push.make_narinfo(STORE, H32, 1, "f" * 52, info,
-                                  convert=self.convert)
-        self.assertEqual(cm.exception.code, 3)
-        self.assertIn(f"narSize <= 0 for {STORE}; skipping", err.getvalue())
+        with self.assertRaises(push.SkipPath) as cm:
+            push.make_narinfo(STORE, H32, 1, "f" * 52, info,
+                              convert=self.convert)
+        self.assertEqual(str(cm.exception), f"narSize <= 0 for {STORE}")
 
     def test_empty_file_hash_skips(self):
-        err = io.StringIO()
-        with redirect_stderr(err):
-            with self.assertRaises(push.NarinfoSkip) as cm:
-                push.make_narinfo(STORE, H32, 1, "", self.info,
-                                  convert=self.convert)
-        self.assertEqual(cm.exception.code, 4)
-        self.assertIn(f"empty FileHash/NarHash for {STORE}; skipping", err.getvalue())
+        with self.assertRaises(push.SkipPath) as cm:
+            push.make_narinfo(STORE, H32, 1, "", self.info,
+                              convert=self.convert)
+        self.assertEqual(str(cm.exception),
+                         f"empty FileHash/NarHash for {STORE}")
 
     def test_empty_nar_hash_skips(self):
         info = dict(self.info)
         info["narHash"] = ""
-        with self.assertRaises(push.NarinfoSkip) as cm:
+        with self.assertRaises(push.SkipPath) as cm:
             push.make_narinfo(STORE, H32, 1, "f" * 52, info,
                               convert=self.convert)
-        self.assertEqual(cm.exception.code, 4)
+        self.assertEqual(str(cm.exception),
+                         f"empty FileHash/NarHash for {STORE}")
 
 
 class PathInfoItemsTest(unittest.TestCase):
@@ -176,12 +171,12 @@ class MergeIndexTest(unittest.TestCase):
         self.assertEqual(index["public_key"], "new-key")
 
     def test_dirty_existing_json_rejected(self):
-        """Corrupt existing index is an error (exit 1), not silently empty."""
+        """Corrupt existing index is Fatal, not silently empty."""
         for blob in (b"not json", b"null", b"[1, 2]", b""):
-            with redirect_stderr(io.StringIO()):
-                with self.assertRaises(SystemExit) as cm:
-                    push.load_existing_index(blob)
-            self.assertEqual(cm.exception.code, 1)
+            with self.assertRaises(push.Fatal) as cm:
+                push.load_existing_index(blob)
+            self.assertEqual(str(cm.exception),
+                             "failed to parse existing cache index")
 
     def test_existing_index_loaded(self):
         self.assertEqual(push.load_existing_index(b'{"public_key": "k"}'),
@@ -189,28 +184,24 @@ class MergeIndexTest(unittest.TestCase):
 
 
 class FailOrSkipTest(unittest.TestCase):
-    """401/403 -> warning + exit 0; anything else -> error + exit 1."""
+    """401/403 -> SkipRound; anything else -> Fatal."""
 
-    def test_401_403_warn_and_exit_zero(self):
+    def test_401_403_skip_round(self):
         for code in (401, 403):
-            err = io.StringIO()
-            with redirect_stderr(err):
-                with self.assertRaises(SystemExit) as cm:
-                    push.fail_or_skip(code, "blob upload failed for sha256:x")
-            self.assertEqual(cm.exception.code, 0)
-            self.assertIn("::warning::blob upload failed for sha256:x "
-                          "(HTTP %d: insufficient permission; fork PRs and "
-                          "missing packages:* permissions are skipped)" % code,
-                          err.getvalue())
+            with self.assertRaises(push.SkipRound) as cm:
+                push.fail_or_skip(code, "blob upload failed for sha256:x")
+            self.assertIn(
+                "blob upload failed for sha256:x "
+                "(HTTP %d: insufficient permission; fork PRs and "
+                "missing packages:* permissions are skipped)" % code,
+                str(cm.exception))
 
-    def test_other_code_error_and_exit_one(self):
-        err = io.StringIO()
-        with redirect_stderr(err):
-            with self.assertRaises(SystemExit) as cm:
-                push.fail_or_skip(500, "OCI manifest push failed (cache-index)")
-        self.assertEqual(cm.exception.code, 1)
-        self.assertIn("::error::OCI manifest push failed (cache-index) "
-                      "(HTTP 500)", err.getvalue())
+    def test_other_code_fatal(self):
+        with self.assertRaises(push.Fatal) as cm:
+            push.fail_or_skip(500, "OCI manifest push failed (cache-index)")
+        self.assertEqual(
+            str(cm.exception),
+            "OCI manifest push failed (cache-index) (HTTP 500)")
 
 
 class UrlTest(unittest.TestCase):
