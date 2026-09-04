@@ -213,7 +213,6 @@ def sign_paths(key_file: str, paths) -> None:
 
 
 def store_scan_candidates():
-    """Whole-store enumeration via `nix path-info --all`."""
     data = nix_json("path-info", "--all", "--json", "--json-format", "1")
     if isinstance(data, dict):
         return list(data.keys())
@@ -785,7 +784,6 @@ def export_upload(paths, info_by_path: dict, token: str, repo: str,
 
 def rebuild_index(work_dir: str, existing: dict, new_entries: dict,
                   own_key: str, repo: str, generated: str) -> dict:
-    """Merge new entries into the cache index and write cache-index.json."""
     index = merge_index(existing, new_entries, own_key, repo, REGISTRY,
                         generated)
     index_json = os.path.join(work_dir, "cache-index.json")
@@ -826,7 +824,6 @@ def push_index(index_json: str, token: str, repo: str,
 
 
 def verify_readback(token: str, repo: str, index_digest: str) -> None:
-    """Poll the cache-index manifest until its layer digest matches."""
     for _ in range(READBACK_TRIES):
         st, body = fetch_manifest("cache-index", token, repo)
         if st == 200 and layer_digest(body) == index_digest:

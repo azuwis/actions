@@ -32,7 +32,6 @@ GITHUB_TOKEN="$TOKEN" \
   python3 "$SCRIPT_DIR/nixcache-proxy.py" >"$INDEX_DIR/proxy.log" 2>&1 &
 PROXY_PID=$!
 
-# health check + repo identity check
 if kill -0 "$PROXY_PID" 2>/dev/null \
   && curl -fs --max-time 2 --retry 15 --retry-delay 1 --retry-connrefused \
       -o /dev/null "http://127.0.0.1:$PORT/nix-cache-info" 2>/dev/null; then
@@ -57,11 +56,10 @@ if [ "$READY" != 1 ]; then
   fi
 fi
 
-warn() { # message
+warn() {
   echo "::warning::$1"
 }
 
-# idempotent marker block in daemon + user nix.conf
 if [ "$READY" = 1 ]; then
   BLOCK="extra-substituters = http://127.0.0.1:$PORT
 extra-trusted-substituters = http://127.0.0.1:$PORT"
@@ -103,7 +101,6 @@ require-sigs = false"
   fi
   apply_config "${HOME}/.config/nix/nix.conf" 0
 
-  # restart the daemon so the config takes effect
   if [ -e /nix/var/nix/daemon-socket ]; then
     case "$RUNNER_OS" in
     macOS)
@@ -118,7 +115,6 @@ require-sigs = false"
     esac
   fi
 
-  # soft self-check (merged client+daemon config)
   if nix show-config 2>/dev/null | grep -q "127.0.0.1:$PORT"; then
     echo "::group::nix/cache"
     echo "OCI substituter configured: http://127.0.0.1:$PORT (repo=$REPO)"
