@@ -12,16 +12,15 @@ READY=0
 
 echo "::add-mask::${TOKEN}"
 
-# 1. vendored proxy requires Python >= 3.10 (PEP 604 annotations)
+# vendored proxy uses PEP 604 unions => Python >= 3.10
 if ! python3 -c 'import sys; assert sys.version_info >= (3, 10)' 2>/dev/null; then
   echo "::error::nix/cache requires Python >= 3.10 (found: $(python3 --version 2>&1 || echo unknown))"
   exit 1
 fi
 
-# 2. always pick a free port (never race for 37515)
+# free port per run; don't race for the proxy default 37515
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 
-# 3. start vendored proxy
 INDEX_DIR="$RUNNER_TEMP/nixcache-proxy"
 mkdir -p "$INDEX_DIR"
 chmod 700 "$INDEX_DIR"
@@ -33,15 +32,14 @@ GITHUB_TOKEN="$TOKEN" \
   python3 "$SCRIPT_DIR/nixcache-proxy.py" >"$INDEX_DIR/proxy.log" 2>&1 &
 PROXY_PID=$!
 
-# 4. health check + identity check (must use the chosen port;
-#    _status can block on the index prefetch lock up to ~60s on cold start)
+# health check + repo identity check
 if kill -0 "$PROXY_PID" 2>/dev/null \
   && curl -fs --max-time 2 --retry 15 --retry-delay 1 --retry-connrefused \
       -o /dev/null "http://127.0.0.1:$PORT/nix-cache-info" 2>/dev/null; then
   READY=1
 fi
 if [ "$READY" = 1 ]; then
-  # _status 会阻塞在索引预取锁上最长 ~60s（冷启动），上限提到 60s
+  # 60s cap: cold start blocks on the index prefetch lock
   STATUS_REPO="$(curl -fs --max-time 60 "http://127.0.0.1:$PORT/_status" 2>/dev/null | jq -r '.repo // empty' 2>/dev/null || true)"
   if [ -n "$STATUS_REPO" ] && [ "$STATUS_REPO" != "$REPO" ]; then
     echo "::warning::proxy identity mismatch (serves repo=$STATUS_REPO, expected=$REPO); not configuring substituter"
@@ -59,11 +57,11 @@ if [ "$READY" != 1 ]; then
   fi
 fi
 
-# 5. warn helper
 warn() { # message
   echo "::warning::$1"
 }
-# 6. idempotent marker block in nix.conf (daemon config + user config)
+
+# idempotent marker block in daemon + user nix.conf
 if [ "$READY" = 1 ]; then
   BLOCK="extra-substituters = http://127.0.0.1:$PORT
 extra-trusted-substituters = http://127.0.0.1:$PORT"
@@ -80,7 +78,7 @@ extra-trusted-public-keys = $PUBLIC_KEY"
 require-sigs = false"
   fi
 
-  # GNU/BSD 兼容的幂等 marker 替换：sed -i.bak + 删除备份
+  # portable marker replace: GNU/BSD sed -i.bak, then drop the backup
   apply_config() { # $1 = file, $2 = use sudo (1/0)
     local file="$1"
     local -a sudo_cmd=()
@@ -105,7 +103,7 @@ require-sigs = false"
   fi
   apply_config "${HOME}/.config/nix/nix.conf" 0
 
-  # 7. restart daemon so the config takes effect
+  # restart the daemon so the config takes effect
   if [ -e /nix/var/nix/daemon-socket ]; then
     case "$RUNNER_OS" in
     macOS)
@@ -120,7 +118,7 @@ require-sigs = false"
     esac
   fi
 
-  # 8. self-check (soft: merged view of client+daemon config)
+  # soft self-check (merged client+daemon config)
   if nix show-config 2>/dev/null | grep -q "127.0.0.1:$PORT"; then
     echo "::group::nix/cache"
     echo "OCI substituter configured: http://127.0.0.1:$PORT (repo=$REPO)"
@@ -131,7 +129,7 @@ require-sigs = false"
   fi
 fi
 
-# 9. state for nix/cache/post
+# state for nix/cache/post
 {
   echo "NIXCACHE_REPO=$REPO"
   echo "NIXCACHE_PORT=$PORT"

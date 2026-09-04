@@ -1,25 +1,20 @@
 #!/usr/bin/env python3
 """Push locally built Nix store paths to a GHCR OCI binary cache.
 
-Flow: OCI token exchange, candidate collection (paths mode or whole-store
-scan), filtering against the existing cache-index, export (`nix-store --dump`
-+ in-process zstd/xz compression), OCI blob/manifest upload (HEAD fast-path,
-POST-init, PUT with digest query), cache-index merge, readback verification
-and a one-line summary annotation.
+Flow: OCI token exchange -> candidate collection (paths mode or whole-store
+scan) -> filter against the existing cache-index -> export (`nix-store --dump`
++ in-process zstd/xz compression) -> blob/manifest upload (HEAD fast-path,
+POST-init, PUT with digest query) -> cache-index merge -> readback verification.
 
-Environment:
-  INPUT_REPO / INPUT_TOKEN / INPUT_SIGNING_KEY / INPUT_PATHS  (action inputs)
-  GITHUB_REPOSITORY / GITHUB_TOKEN                            (fallbacks)
-  NIXCACHE_PROXY_PID                                          (from nix/cache)
-  RUNNER_TEMP / RUNNER_OS / HOME
+The flow is exception-driven: `SkipRound` warns and exits 0 (empty round,
+401/403, index unavailable); `Fatal` errors and exits 1 (corrupt index,
+signing failure, HTTP failures); `SkipPath` skips one store path; `NixError`
+wraps a failed `nix` command and call sites decide skip vs `Fatal`.
 
-Control flow: business logic is exception-driven.  `SkipRound` aborts the
-round with a warning (exit 0: 401/403, index unavailable, nothing to do);
-`Fatal` aborts with an error (exit 1: corrupt index, signing failure, HTTP
-failures); `SkipPath` skips one store path.  `NixError` wraps a failed nix
-command; call sites decide whether that is a skip or a `Fatal`.  All
-diagnostics (::warning::/::error::/::notice::/::group::) go to stderr;
-::add-mask:: goes to stdout; bulk data flows through files and return values.
+Environment: INPUT_REPO / INPUT_TOKEN / INPUT_SIGNING_KEY / INPUT_PATHS
+(action inputs), GITHUB_REPOSITORY / GITHUB_TOKEN (fallbacks),
+NIXCACHE_PROXY_PID, RUNNER_TEMP / RUNNER_OS / HOME.  Diagnostics go to stderr;
+::add-mask:: goes to stdout.
 """
 import base64
 import hashlib
@@ -44,7 +39,7 @@ INDEX_MEDIA_TYPE = "application/vnd.nix.cache.index.v1+json"
 STORE_PATH_RE = re.compile(r"^/nix/store/[a-z0-9]{32}-")
 CHUNK = 1 << 20                     # 1 MiB
 
-try:  # zstd 进标准库是 Python 3.14；旧版回退 lzma
+try:  # compression.zstd is stdlib from Python 3.14; older versions use xz
     from compression.zstd import ZstdCompressor as _ZstdCompressor
     COMPRESSION = "zstd"
     COMPRESSION_EXT = "zst"
@@ -52,12 +47,12 @@ except ImportError:
     _ZstdCompressor = None
     COMPRESSION = "xz"
     COMPRESSION_EXT = "xz"
-MAX_NAR_SIZE = 10737418240          # ~10 GiB GHCR blob limit
+MAX_NAR_SIZE = 10737418240          # ~10 GiB GHCR layer limit
 MAX_RETRIES = 3
 RETRY_DELAY = 2
 CLOSURE_BATCH = 64                  # closure expansion batch size (ARG_MAX)
 STD_BATCH = 128                     # path-info / signing batch size (ARG_MAX)
-READBACK_TRIES = 30                 # readback poll loop
+READBACK_TRIES = 30
 READBACK_SLEEP = 2
 REDIRECT_STATUSES = (301, 302, 303, 307, 308)
 MAX_REDIRECTS = 5
@@ -151,8 +146,8 @@ def nix_json(*args):
 
 
 def nix_file_hash(path: str) -> str:
-    """FileHash (bare nix-base32) via the stable legacy `nix-hash` CLI
-    (present in every Nix version); empty when unhashable (path skipped)."""
+    """FileHash (bare nix-base32) via the legacy `nix-hash` CLI, still shipped
+    with Nix; empty when unhashable (path skipped)."""
     p = subprocess.run(["nix-hash", "--flat", "--type", "sha256", "--base32",
                         path], capture_output=True, text=True)
     return p.stdout.strip() if p.returncode == 0 else ""
@@ -218,8 +213,7 @@ def sign_paths(key_file: str, paths) -> None:
 
 
 def store_scan_candidates():
-    """Whole-store enumeration via `nix path-info --all` (modern nix, like
-    the rest of this action)."""
+    """Whole-store enumeration via `nix path-info --all`."""
     data = nix_json("path-info", "--all", "--json", "--json-format", "1")
     if isinstance(data, dict):
         return list(data.keys())
@@ -230,18 +224,15 @@ def store_scan_candidates():
 
 def http_request(method, url, headers=None, body=None, timeout=30.0,
                  retries=0, retry_delay=2.0):
-    """One HTTP request with `-L`-style redirect following.  Returns
-    (status, headers, body).
+    """One HTTP request, following redirects and retrying like curl.
+    Returns (status, headers, body).
 
-    `body` may be bytes or a seekable file object (streamed; re-seek(0)
-    before every request and every redirect hop, so a retried or redirected
-    PUT replays the file).  Redirects (301/302/303/307/308 with a Location)
-    are followed up to MAX_REDIRECTS hops: GET/HEAD follow any 30x; PUT/POST
-    only 307/308, preserving the method and body; Authorization is dropped
-    when the redirect leaves the original host.
-    Retries `retries` times on transport errors and HTTP 408/429/5xx; a
-    persistent failure returns (0, [], b'') for transport errors and the
-    final status otherwise.
+    `body` may be bytes or a seekable file object (re-seek(0) before every
+    request/redirect hop, so a retried or redirected PUT replays the file).
+    GET/HEAD follow any 30x; PUT/POST only 307/308, preserving method and
+    body; Authorization is dropped when a redirect leaves the host.  Retries
+    transport errors and 408/429/5xx; a persistent transport failure returns
+    (0, [], b''), the final status otherwise.
     """
     attempt = 0
     while True:
@@ -262,10 +253,8 @@ def http_request(method, url, headers=None, body=None, timeout=30.0,
 
 
 def _send_request(method, url, headers, body, timeout=30.0):
-    """One transfer: a single request plus redirect following (relative
-    Locations resolved against the current URL, max MAX_REDIRECTS hops; a
-    30x without Location or over the hop limit is returned as-is).
-    Transport errors propagate to the caller's retry loop."""
+    """One transfer: a request plus redirects (relative Locations resolved
+    against the current URL; transport errors propagate to the retry loop)."""
     current_url = url
     current_headers = dict(headers)
     hops = 0
@@ -441,8 +430,8 @@ def _zstd_compress_stream(src, dst) -> None:
 
 
 def _compress_stream(src, dst) -> None:
-    """Stream `src` (bytes-like) into `dst` compressed; `Compression: zstd`
-    on Python >= 3.14, xz fallback otherwise (narinfo self-describes)."""
+    """Stream `src` into `dst`: zstd on Python >= 3.14, xz fallback otherwise
+    (the narinfo `Compression:` field self-describes)."""
     if _ZstdCompressor is not None:
         _zstd_compress_stream(src, dst)
     else:
@@ -450,8 +439,8 @@ def _compress_stream(src, dst) -> None:
 
 
 def dump_nar(path: str, nar_file: str) -> bool:
-    """`nix-store --dump <path>` -> compressed, writing `nar_file`; False if
-    the dumper failed (compression runs in-process)."""
+    """`nix-store --dump <path>` compressed in-process into `nar_file`;
+    False if the dumper failed."""
     dumper = subprocess.Popen(["nix-store", "--dump", path],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     with dumper.stdout as src, open(nar_file, "wb") as dst:
@@ -472,7 +461,7 @@ def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
     if nar_size <= 0:
         raise SkipPath(f"narSize <= 0 for {store_path}")
     if not file_hash or not nar_hash:
-        # 空 FileHash/NarHash 会毒化 index 条目（入 index 后永不重试）
+        # empty hashes would poison the index entry (never retried)
         raise SkipPath(f"empty FileHash/NarHash for {store_path}")
     refs = info.get("references", []) or []
     deriver = info.get("deriver", "")
@@ -556,8 +545,8 @@ def merge_index(existing: dict, new_entries: dict, pubkey: str,
 
 
 def index_public_key(index: dict) -> str:
-    """`.public_key // ""` over the existing index (non-string scalars are
-    rendered as text)."""
+    """public_key from the existing index, rendered as text; '' when
+    absent."""
     v = index.get("public_key", "")
     if v is None:
         return ""
@@ -837,8 +826,7 @@ def push_index(index_json: str, token: str, repo: str,
 
 
 def verify_readback(token: str, repo: str, index_digest: str) -> None:
-    """Poll the cache-index manifest until its layer digest matches (the
-    layer digest is stronger than `generated`)."""
+    """Poll the cache-index manifest until its layer digest matches."""
     for _ in range(READBACK_TRIES):
         st, body = fetch_manifest("cache-index", token, repo)
         if st == 200 and layer_digest(body) == index_digest:
@@ -913,10 +901,8 @@ def main(env=None) -> None:
               f"(found {sys.version_info.major}.{sys.version_info.minor})",
               file=sys.stderr)
         sys.exit(1)
-    # The try/finally below only sees exceptions, so map SIGTERM to
-    # SystemExit(143) (SIGINT already arrives as KeyboardInterrupt inside
-    # the try).  SystemExit then unwinds through the finally -> cleanup, and
-    # the process exits with 143.
+    # map SIGTERM to SystemExit so the finally-cleanup runs (exit 143);
+    # SIGINT already arrives as KeyboardInterrupt inside the try.
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
     config = Config.from_env(os.environ if env is None else env)
     work_dir = os.path.join(config.runner_temp or "/tmp", "nixcache-work")
