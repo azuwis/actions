@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Push locally built Nix store paths to a GHCR OCI binary cache.
 
-Pure-Python port of the former `push.sh` (bash + inline python).  Every
-semantic of the bash version is preserved: cleanup on exit, token exchange,
-OCI manifest/blob upload (HEAD-fast-path, POST-init, PUT with digest query),
-cache-index merge, readback verification and GH Actions step summary.
+Flow: OCI token exchange, candidate collection (paths mode or whole-store
+scan), filtering against the existing cache-index, export (`nix-store --dump`
++ in-process zstd/xz compression), OCI blob/manifest upload (HEAD fast-path,
+POST-init, PUT with digest query), cache-index merge, readback verification
+and GH Actions step summary.
 
-Environment (same as the bash version):
+Environment:
   INPUT_REPO / INPUT_TOKEN / INPUT_SIGNING_KEY / INPUT_PATHS  (action inputs)
   GITHUB_REPOSITORY / GITHUB_TOKEN                            (fallbacks)
   NIXCACHE_REPO / NIXCACHE_PORT / NIXCACHE_PROXY_PID           (from nix/cache)
@@ -30,7 +31,6 @@ import subprocess
 import sys
 import time
 import urllib.parse
-from pathlib import Path
 
 REGISTRY = "ghcr.io"
 MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
@@ -51,8 +51,8 @@ except ImportError:
 MAX_NAR_SIZE = 10737418240          # ~10 GiB GHCR blob limit
 MAX_RETRIES = 3                     # curl --retry 3 (→ 4 attempts)
 RETRY_DELAY = 2                     # curl --retry-delay 2
-CLOSURE_BATCH = 64                  # xargs -n 64 in the bash version
-STD_BATCH = 128                     # xargs -n 128 in the bash version
+CLOSURE_BATCH = 64                  # closure expansion batch size
+STD_BATCH = 128                     # path-info / signing batch size
 READBACK_TRIES = 30                 # readback poll loop
 READBACK_SLEEP = 2
 REDIRECT_STATUSES = (301, 302, 303, 307, 308)
@@ -316,7 +316,7 @@ def nix_key_public(secret_file: str) -> str:
 
 
 def nix_hash_file(path: str) -> str:
-    """FileHash (bare nix-base32); fallback to nix-hash exactly like bash."""
+    """FileHash (bare nix-base32); falls back to the legacy nix-hash CLI."""
     p = subprocess.run(["nix", "hash", "file", "--type", "sha256", "--base32", path],
                        capture_output=True, text=True)
     if p.returncode == 0:
@@ -354,8 +354,7 @@ def nix_path_info(paths, recursive: bool = False):
 
 
 def closure_paths(data):
-    """paths from `nix path-info --recursive --json` — array or map form
-    (jq 'if type=="array" then . else to_entries|... end | .[] | .path')."""
+    """paths from `nix path-info --recursive --json` — array or map form."""
     if isinstance(data, list):
         out = []
         for it in data:
@@ -368,30 +367,25 @@ def closure_paths(data):
     raise ValueError("unexpected path-info JSON")
 
 
-def path_info_rows(data):
-    """(path, signatures) rows from path-info JSON (array or map form,
-    jq '.[] | [.path, ((.signatures // []) | join(" "))] | @tsv')."""
+def path_info_items(data):
+    """(path, info-dict) pairs from path-info JSON (array or map form)."""
     if isinstance(data, list):
-        rows = []
         for it in data:
             if not isinstance(it, dict) or "path" not in it:
                 raise ValueError("unexpected path-info array element")
-            rows.append((it.get("path", ""), list(it.get("signatures", []) or [])))
-        return rows
-    if isinstance(data, dict):
-        rows = []
+            yield it["path"], it
+    elif isinstance(data, dict):
         for key, val in data.items():
             if not isinstance(val, dict):
                 raise ValueError("unexpected path-info map value")
-            rows.append((key, list(val.get("signatures", []) or [])))
-        return rows
-    raise ValueError("unexpected path-info JSON")
+            yield key, val
+    else:
+        raise ValueError("unexpected path-info JSON")
 
 
 def expand_closure_batch(batch):
-    """One xargs -n 64 batch: (paths, batch_failed).  Batch failure = nix
-    non-zero exit, non-empty stderr, or unparseable JSON (the bash version
-    surfaced all of these through the captured stderr + `jq` failure)."""
+    """One CLOSURE_BATCH batch: (paths, batch_failed).  Batch failure = nix
+    non-zero exit, non-empty stderr, or unparseable JSON."""
     p = nix_path_info(batch, recursive=True)
     failed = p.returncode != 0
     paths = []
@@ -407,7 +401,7 @@ def expand_closure_batch(batch):
 
 def sign_paths(key_file: str, paths, batch: int = STD_BATCH) -> bool:
     """`nix store sign --key-file` for all paths; True iff every batch worked
-    (xargs runs all units; overall status is the failure any unit produced)."""
+    (all batches run; overall status is the failure any batch produced)."""
     ok = True
     for b in chunks(paths, batch):
         p = subprocess.run(["nix", "store", "sign", "--key-file", key_file, *b],
@@ -484,7 +478,7 @@ def dump_nar(path: str, nar_file: str) -> bool:
 # ------------------------------------------------------- narinfo + filtering
 
 class NarinfoSkip(Exception):
-    """make_narinfo skip outcomes, mirroring bash exit codes 3/4."""
+    """make_narinfo skip outcomes (codes 3/4, see make_narinfo docstring)."""
 
     def __init__(self, code: int):
         super().__init__(code)
@@ -492,15 +486,11 @@ class NarinfoSkip(Exception):
 
 
 def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
-                 file_hash: str, path_info: str, cache_dir: str,
-                 convert=nix_hash_convert) -> None:
-    """Write `<cache_dir>/<hash_prefix>.narinfo` (bash exit codes: 3 = bad
-    NarSize, 4 = empty FileHash/NarHash; unexpected errors raise)."""
-    info = json.loads(path_info)
-    if isinstance(info, dict):
-        info = info.get(store_path) or (next(iter(info.values())) if info else {})
-    else:
-        info = info[0] if info else {}
+                 file_hash: str, info: dict, cache_dir: str,
+                 convert=nix_hash_convert) -> str:
+    """Write `<cache_dir>/<hash_prefix>.narinfo` from one path-info dict and
+    return its text.  NarinfoSkip codes mirror the old shell exit codes:
+    3 = bad NarSize, 4 = empty FileHash/NarHash; unexpected errors raise."""
     nar_hash = to_base32(info.get("narHash", ""), convert)
     nar_size = int(info.get("narSize", 0))
     if nar_size <= 0:
@@ -530,14 +520,16 @@ def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
     for sig in sigs:
         lines.append("Sig: " + sig)
 
+    text = "\n".join(lines) + "\n"
     with open(os.path.join(cache_dir, hash_prefix + ".narinfo"), "w") as f:
-        f.write("\n".join(lines) + "\n")
+        f.write(text)
+    return text
 
 
 def filter_paths(rows, known_entries, own_key_name):
     """(path, signatures) rows -> (keep, missing_own_signature).
 
-    Bash rules: skip paths already in the index; with a key skip paths that
+    Rules: skip paths already in the index; with a key skip paths that
     carry any signature from another cache, keep own-signed, and report paths
     missing the own-key signature as an error; without a key skip everything
     signed.
@@ -564,8 +556,7 @@ def filter_paths(rows, known_entries, own_key_name):
 # ------------------------------------------------------------- index merge
 
 def parse_existing(text: str) -> dict:
-    """Existing cache index JSON; a corrupt/empty blob is treated as empty
-    (bash: `json.load or {}` on JSONDecodeError/null)."""
+    """Existing cache index JSON; a corrupt/empty blob is treated as empty."""
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
@@ -578,39 +569,9 @@ def load_existing(path: str) -> dict:
         return parse_existing(f.read())
 
 
-def new_entries_from_receipts(receipts_path: str, generated: str) -> dict:
-    """receipts.jsonl -> {hash: entry} by reading each narinfo file."""
-    new_entries = {}
-    with open(receipts_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            r = json.loads(line)
-            with open(r["narinfo_file"]) as nf:
-                narinfo = nf.read()
-            store_path = ""
-            for l in narinfo.splitlines():
-                if l.startswith("StorePath: "):
-                    store_path = l[len("StorePath: "):].strip()
-                    break
-            name = (
-                os.path.basename(store_path).split("-", 1)[-1]
-                if store_path else r["hash"]
-            )
-            new_entries[r["hash"]] = {
-                "name": name,
-                "narinfo": narinfo,
-                "nar_digest": r["nar_digest"],
-                "nar_size": int(r["nar_size"]),
-                "added": generated,
-            }
-    return new_entries
-
-
 def merge_index(existing: dict, new_entries: dict, pubkey: str,
                 repo: str, registry: str, generated: str) -> dict:
-    """Build the merged cache index (bash: PUBKEY or existing public_key)."""
+    """Build the merged cache index (provided public key, else existing one)."""
     index = {
         "version": 1,
         "repo": repo,
@@ -631,10 +592,11 @@ def merge_index(existing: dict, new_entries: dict, pubkey: str,
 def cleanup(proxy_pid: str, runner_os: str, work_dir: str, home: str) -> None:
     """EXIT-trap equivalent: kill our proxy, strip nix.conf marker blocks,
     best-effort daemon restart, remove the work directory.  Every action is
-    best-effort (bash `|| true`): cleanup must never raise."""
+    best-effort (`|| true` semantics): cleanup must never raise."""
 
     def best_effort(cmd, capture: bool = False):
-        """bash `|| true` equivalent; returns the CompletedProcess or None."""
+        """Run a command with `|| true` semantics; returns the
+        CompletedProcess or None if it could not even be spawned."""
         try:
             if capture:
                 return subprocess.run(cmd, capture_output=True, text=True)
@@ -686,18 +648,10 @@ def step_fetch_existing_index(oci_token: str, repo: str, work_dir: str) -> str:
     manifest/blob fetch failure."""
     idx_file = os.path.join(work_dir, "existing-index.json")
     with open(idx_file, "w") as f:
-        f.write("{}\n")                    # bash: echo '{}'
+        f.write("{}\n")
     st, body = fetch_manifest("cache-index", oci_token, repo)
     if st == 200:
-        idx_digest = ""
-        try:
-            manifest = json.loads(body)
-            if isinstance(manifest, dict):
-                layers = manifest.get("layers") or []
-                if layers and isinstance(layers[0], dict):
-                    idx_digest = layers[0].get("digest", "") or ""
-        except (ValueError, AttributeError, TypeError):
-            idx_digest = ""
+        idx_digest = layer_digest(body)
         if idx_digest:
             st, _, data = http_request(
                 "GET", blob_url(repo, idx_digest),
@@ -717,8 +671,8 @@ def step_fetch_existing_index(oci_token: str, repo: str, work_dir: str) -> str:
 
 
 def index_public_key(idx_file: str) -> str:
-    """`.public_key // ""` over the existing index (jq semantics: non-string
-    scalars are rendered as text; invalid JSON -> "")."""
+    """`.public_key // ""` over the existing index (non-string scalars are
+    rendered as text; invalid JSON -> "")."""
     try:
         with open(idx_file) as f:
             data = json.load(f)
@@ -733,19 +687,19 @@ def index_public_key(idx_file: str) -> str:
 
 
 def step_signing_setup(signing_key: str, idx_pubkey, work_dir: str):
-    """Verify / derive the signing key (bash exit paths preserved)."""
+    """Verify / derive the signing key.  Exits on mismatch (no key rotation)."""
     if not signing_key:
         if idx_pubkey:
             warn("cache index is signed but no signing_key provided; skipping "
                  "upload (refusing unsigned entries)")
             sys.exit(0)
         return "", ""
-    old = os.umask(0o077)                   # bash umask 077 around the key write
+    old = os.umask(0o077)                   # key file must be 0600
     try:
         with open(os.path.join(work_dir, "signing.key"), "w") as f:
             f.write(signing_key + "\n")
     finally:
-        os.umask(0o022)                     # bash umask 022 afterwards
+        os.umask(0o022)
     own_key = nix_key_public(os.path.join(work_dir, "signing.key"))
     if not own_key:
         print("::error::cannot derive public key from signing_key", file=sys.stderr)
@@ -787,17 +741,22 @@ def step_collect_candidates(paths_input: str):
 
 
 def step_filter_candidates(cand, idx_file: str, own_key_name: str):
-    """path-info -> filters, mirroring the bash inline python + `rc=2` error
-    handling.  Returns the keep list (exits on signing failure / empty)."""
+    """path-info -> filters (exits on signing failure / empty).  Returns
+    (keep, info_by_path): the keep list plus the path-info dict per kept
+    path, reused by the export step so no second `nix path-info` pass runs."""
     rows = []
+    info_by_path = {}
     for batch in chunks(cand, STD_BATCH):
         p = nix_path_info(batch)
         if p.returncode != 0:
             continue
         try:
-            rows.extend(path_info_rows(json.loads(p.stdout)))
+            data = json.loads(p.stdout)
         except (ValueError, json.JSONDecodeError):
             continue
+        for path, info in path_info_items(data):
+            rows.append((path, list(info.get("signatures", []) or [])))
+            info_by_path[path] = info
     try:
         with open(idx_file) as f:
             index = json.load(f)
@@ -816,19 +775,25 @@ def step_filter_candidates(cand, idx_file: str, own_key_name: str):
         print("::error::one or more paths carry no signature from this cache "
               "after signing", file=sys.stderr)
         sys.exit(1)
-    return keep
+    return keep, info_by_path
 
 
-def step_export_upload(paths, oci_token: str, repo: str, work_dir: str,
-                       cache_dir: str):
+def step_export_upload(paths, info_by_path: dict, oci_token: str, repo: str,
+                       cache_dir: str, generated: str):
     """Export + narinfo + blob upload loop.
-    Returns (uploaded, skipped, receipts path)."""
+    Returns (uploaded, skipped, new_entries) where new_entries is
+    {hash: entry} ready for the index merge."""
     os.makedirs(os.path.join(cache_dir, "nar"), exist_ok=True)
-    receipts_path = os.path.join(work_dir, "receipts.jsonl")
+    new_entries = {}
     uploaded = 0
     skipped = 0
     for path in paths:
         hash_prefix = os.path.basename(path)[:32]
+        info = info_by_path.get(path)
+        if info is None:
+            warn(f"nix path-info missing for {path}; skipping")
+            skipped += 1
+            continue
         nar_file = os.path.join(cache_dir, "nar", hash_prefix + ".nar." + COMPRESSION_EXT)
         remove_file(nar_file)
         print(f"::group::nix/cache export {hash_prefix}", file=sys.stderr)
@@ -845,17 +810,8 @@ def step_export_upload(paths, oci_token: str, repo: str, work_dir: str,
             print("::endgroup::", file=sys.stderr)
             continue
         file_hash = nix_hash_file(nar_file)
-        p = subprocess.run(["nix", "path-info", "--json", "--json-format", "1", path],
-                           capture_output=True, text=True)
-        path_info = p.stdout if p.returncode == 0 else ""
-        if not path_info:
-            warn(f"nix path-info failed for {path}; skipping")
-            remove_file(nar_file)
-            skipped += 1
-            print("::endgroup::", file=sys.stderr)
-            continue
         try:
-            make_narinfo(path, hash_prefix, size, file_hash, path_info, cache_dir)
+            narinfo = make_narinfo(path, hash_prefix, size, file_hash, info, cache_dir)
         except NarinfoSkip as e:
             warn(f"narinfo generation failed for {path} (exit {e.code}); skipping")
             remove_file(nar_file)
@@ -868,26 +824,25 @@ def step_export_upload(paths, oci_token: str, repo: str, work_dir: str,
             skipped += 1
             print("::endgroup::", file=sys.stderr)
             continue
-        narinfo_file = os.path.join(cache_dir, hash_prefix + ".narinfo")
         nar_digest = push_blob(nar_file, oci_token, repo)
-        with open(receipts_path, "a") as f:
-            f.write(json.dumps(
-                {"hash": hash_prefix, "narinfo_file": narinfo_file,
-                 "nar_digest": nar_digest, "nar_size": size},
-                separators=(",", ":")) + "\n")
+        new_entries[hash_prefix] = {
+            "name": os.path.basename(path).split("-", 1)[-1],
+            "narinfo": narinfo,
+            "nar_digest": nar_digest,
+            "nar_size": size,
+            "added": generated,
+        }
         uploaded += 1
         remove_file(nar_file)
         print("::endgroup::", file=sys.stderr)
         print(f"uploaded {hash_prefix} ({size} bytes)", file=sys.stderr)
-    return uploaded, skipped, receipts_path
+    return uploaded, skipped, new_entries
 
 
-def step_rebuild_index(work_dir: str, idx_file: str, receipts_path: str,
-                       own_key: str, repo: str) -> dict:
-    """Merge receipts into the cache index and write cache-index.json."""
-    generated = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+def step_rebuild_index(work_dir: str, idx_file: str, new_entries: dict,
+                       own_key: str, repo: str, generated: str) -> dict:
+    """Merge new entries into the cache index and write cache-index.json."""
     existing = load_existing(idx_file)
-    new_entries = new_entries_from_receipts(receipts_path, generated)
     index = merge_index(existing, new_entries, own_key, repo, REGISTRY, generated)
     index_json = os.path.join(work_dir, "cache-index.json")
     with open(index_json, "w") as f:
@@ -902,7 +857,7 @@ def step_push_index(index_json: str, oci_token: str, repo: str,
     index_digest = push_blob(index_json, oci_token, repo)
     config_file = os.path.join(work_dir, "config.json")
     with open(config_file, "w") as f:
-        f.write("{}\n")                     # bash: echo '{}'
+        f.write("{}\n")
     config_digest = push_blob(config_file, oci_token, repo)
     config_size = os.path.getsize(config_file)
     index_size = os.path.getsize(index_json)
@@ -979,9 +934,6 @@ def config_from_env(env) -> dict:
         "runner_os": env.get("RUNNER_OS") or "",
         "summary": env.get("GITHUB_STEP_SUMMARY") or "",
         "home": env.get("HOME") or "",
-        # Interface parity with the bash version (read, like PORT, but unused).
-        "cache_repo": env.get("NIXCACHE_REPO") or "",
-        "port": env.get("NIXCACHE_PORT") or "",
     }
 
 
@@ -991,10 +943,10 @@ def main(env=None) -> None:
               f"(found {sys.version_info.major}.{sys.version_info.minor})",
               file=sys.stderr)
         sys.exit(1)
-    # bash trap EXIT runs cleanup on SIGTERM too; the try/finally below only
-    # sees exceptions, so map SIGTERM to SystemExit(143) (SIGINT already
-    # arrives as KeyboardInterrupt inside the try).  SystemExit then unwinds
-    # through the finally -> cleanup, and the process exits with 143.
+    # The try/finally below only sees exceptions, so map SIGTERM to
+    # SystemExit(143) (SIGINT already arrives as KeyboardInterrupt inside
+    # the try).  SystemExit then unwinds through the finally -> cleanup, and
+    # the process exits with 143.
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
     cfg = config_from_env(os.environ if env is None else env)
     work_dir = os.path.join(cfg["runner_temp"] or "/tmp", "nixcache-work")
@@ -1026,17 +978,19 @@ def main(env=None) -> None:
                 print("::error::nix store sign failed", file=sys.stderr)
                 sys.exit(1)
             print("::endgroup::", file=sys.stderr)
-        keep = step_filter_candidates(cand, idx_file, own_key_name)
+        keep, info_by_path = step_filter_candidates(cand, idx_file, own_key_name)
         if not keep:
             print("Nothing to upload")
             sys.exit(0)
-        uploaded, skipped, receipts_path = step_export_upload(
-            keep, oci_token, cfg["repo"], work_dir, cache_dir)
+        generated = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        uploaded, skipped, new_entries = step_export_upload(
+            keep, info_by_path, oci_token, cfg["repo"], cache_dir,
+            generated)
         if uploaded == 0:
             print("Nothing new to upload")
             sys.exit(0)
-        index = step_rebuild_index(work_dir, idx_file, receipts_path,
-                                   own_key, cfg["repo"])
+        index = step_rebuild_index(work_dir, idx_file, new_entries,
+                                   own_key, cfg["repo"], generated)
         index_digest = step_push_index(
             os.path.join(work_dir, "cache-index.json"), oci_token,
             cfg["repo"], work_dir)

@@ -7,7 +7,6 @@ not on PATH (the CI unit-tests step runs before `./nix` installs anything).
 """
 import importlib.util
 import io
-import json
 import lzma
 import shutil
 import tempfile
@@ -68,15 +67,13 @@ class MakeNarinfoTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.cache_dir = Path(self.tmp.name) / "cache"
         self.cache_dir.mkdir()
-        self.path_info = json.dumps({
-            STORE: {
-                "narHash": SRI_ZERO,
-                "narSize": 1000,
-                "references": ["/nix/store/" + "b" * 32 + "-dep"],
-                "deriver": "/nix/store/" + "c" * 32 + "-pkg-1.0.drv",
-                "signatures": ["own-key:sig1"],
-            }
-        })
+        self.info = {
+            "narHash": SRI_ZERO,
+            "narSize": 1000,
+            "references": ["/nix/store/" + "b" * 32 + "-dep"],
+            "deriver": "/nix/store/" + "c" * 32 + "-pkg-1.0.drv",
+            "signatures": ["own-key:sig1"],
+        }
         self.convert = lambda h: NIX32_ZERO
 
     def tearDown(self):
@@ -86,7 +83,7 @@ class MakeNarinfoTest(unittest.TestCase):
         return self.cache_dir / (H32 + ".narinfo")
 
     def test_sri_converted_with_single_sha256_prefix(self):
-        push.make_narinfo(STORE, H32, 123, "f" * 52, self.path_info,
+        push.make_narinfo(STORE, H32, 123, "f" * 52, self.info,
                           str(self.cache_dir), convert=self.convert)
         text = self.narinfo_file().read_text()
         self.assertIn("NarHash: sha256:" + NIX32_ZERO, text)
@@ -101,26 +98,31 @@ class MakeNarinfoTest(unittest.TestCase):
         self.assertIn("Deriver: " + "c" * 32 + "-pkg-1.0.drv", text)
         self.assertIn("Sig: own-key:sig1", text)
 
+    def test_returns_text_matches_file(self):
+        text = push.make_narinfo(STORE, H32, 1, "f" * 52, self.info,
+                                 str(self.cache_dir), convert=self.convert)
+        self.assertEqual(text, self.narinfo_file().read_text())
+
     def test_prefix_not_doubled_for_prefixed_narhash_but_convert_skipped(self):
         called = []
-        info = json.loads(self.path_info)
-        info[STORE]["narHash"] = "sha256:" + NIX32_ZERO  # already prefixed form
+        info = dict(self.info)
+        info["narHash"] = "sha256:" + NIX32_ZERO  # already prefixed form
 
         def convert(h):
             called.append(h)
             return NIX32_ZERO
 
-        push.make_narinfo(STORE, H32, 1, "f" * 52, json.dumps(info),
+        push.make_narinfo(STORE, H32, 1, "f" * 52, info,
                           str(self.cache_dir), convert=convert)
         self.assertEqual(called, [])  # non-SRI input is passed through untouched
 
     def test_nar_size_zero_skips(self):
-        info = json.loads(self.path_info)
-        info[STORE]["narSize"] = 0
+        info = dict(self.info)
+        info["narSize"] = 0
         err = io.StringIO()
         with redirect_stderr(err):
             with self.assertRaises(push.NarinfoSkip) as cm:
-                push.make_narinfo(STORE, H32, 1, "f" * 52, json.dumps(info),
+                push.make_narinfo(STORE, H32, 1, "f" * 52, info,
                                   str(self.cache_dir), convert=self.convert)
         self.assertEqual(cm.exception.code, 3)
         self.assertIn(f"narSize <= 0 for {STORE}; skipping", err.getvalue())
@@ -130,28 +132,40 @@ class MakeNarinfoTest(unittest.TestCase):
         err = io.StringIO()
         with redirect_stderr(err):
             with self.assertRaises(push.NarinfoSkip) as cm:
-                push.make_narinfo(STORE, H32, 1, "", self.path_info,
+                push.make_narinfo(STORE, H32, 1, "", self.info,
                                   str(self.cache_dir), convert=self.convert)
         self.assertEqual(cm.exception.code, 4)
         self.assertIn(f"empty FileHash/NarHash for {STORE}; skipping", err.getvalue())
         self.assertFalse(self.narinfo_file().exists())
 
     def test_empty_nar_hash_skips(self):
-        info = json.loads(self.path_info)
-        info[STORE]["narHash"] = ""
+        info = dict(self.info)
+        info["narHash"] = ""
         with self.assertRaises(push.NarinfoSkip) as cm:
-            push.make_narinfo(STORE, H32, 1, "f" * 52, json.dumps(info),
+            push.make_narinfo(STORE, H32, 1, "f" * 52, info,
                               str(self.cache_dir), convert=self.convert)
         self.assertEqual(cm.exception.code, 4)
 
-    def test_array_form_path_info(self):
-        # old nix --json (no format 1) emits the array form; make_narinfo
-        # must tolerate it exactly like the bash inline python.
-        array_info = json.dumps([{"narHash": SRI_ZERO, "narSize": 7,
-                                  "references": [], "deriver": "", "signatures": []}])
-        push.make_narinfo(STORE, H32, 1, "f" * 52, array_info,
-                          str(self.cache_dir), convert=self.convert)
-        self.assertIn("NarSize: 7", self.narinfo_file().read_text())
+
+class PathInfoItemsTest(unittest.TestCase):
+    """path_info_items tolerates both map and array forms of
+    `nix path-info --json`."""
+
+    def test_map_form(self):
+        items = list(push.path_info_items({STORE: {"narSize": 1}}))
+        self.assertEqual(items, [(STORE, {"narSize": 1})])
+
+    def test_array_form(self):
+        items = list(push.path_info_items([{"path": STORE, "narSize": 1}]))
+        self.assertEqual(items, [(STORE, {"path": STORE, "narSize": 1})])
+
+    def test_bad_input_raises(self):
+        with self.assertRaises(ValueError):
+            list(push.path_info_items([{"narSize": 1}]))
+        with self.assertRaises(ValueError):
+            list(push.path_info_items({STORE: "not a dict"}))
+        with self.assertRaises(ValueError):
+            list(push.path_info_items("nope"))
 
 
 class MergeIndexTest(unittest.TestCase):
@@ -421,8 +435,7 @@ class RealNixTest(unittest.TestCase):
     def test_make_narinfo_end_to_end_with_real_convert(self):
         with tempfile.TemporaryDirectory() as tmp:
             push.make_narinfo(STORE, H32, 1, "f" * 52,
-                              json.dumps({STORE: {"narHash": SRI_ZERO,
-                                                  "narSize": 10}}),
+                              {"narHash": SRI_ZERO, "narSize": 10},
                               tmp)
             text = (Path(tmp) / (H32 + ".narinfo")).read_text()
             self.assertIn("NarHash: sha256:" + NIX32_ZERO, text)

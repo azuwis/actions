@@ -42,24 +42,20 @@ PROXY_PID=$!
 
 # 4. health check + identity check (must use the chosen port;
 #    _status can block on the index prefetch lock up to ~60s on cold start)
-if kill -0 "$PROXY_PID" 2>/dev/null; then
-  for _ in $(seq 1 15); do
-    if curl -fs --max-time 2 "http://127.0.0.1:$PORT/nix-cache-info" >/dev/null 2>&1; then
-      READY=1
-      break
-    fi
-    sleep 1
-  done
-  if [ "$READY" = 1 ]; then
-    # _status 会阻塞在索引预取锁上最长 ~60s（冷启动），上限提到 60s
-    STATUS_REPO="$(curl -fs --max-time 60 "http://127.0.0.1:$PORT/_status" 2>/dev/null | jq -r '.repo // empty' 2>/dev/null || true)"
-    if [ -n "$STATUS_REPO" ] && [ "$STATUS_REPO" != "$REPO" ]; then
-      echo "::warning::proxy identity mismatch (serves repo=$STATUS_REPO, expected=$REPO); not configuring substituter"
-      READY=0
-    elif [ -z "$STATUS_REPO" ]; then
-      echo "::warning::proxy status check failed (port $PORT)"
-      READY=0
-    fi
+if kill -0 "$PROXY_PID" 2>/dev/null \
+  && curl -fs --max-time 2 --retry 15 --retry-delay 1 --retry-connrefused \
+      -o /dev/null "http://127.0.0.1:$PORT/nix-cache-info" 2>/dev/null; then
+  READY=1
+fi
+if [ "$READY" = 1 ]; then
+  # _status 会阻塞在索引预取锁上最长 ~60s（冷启动），上限提到 60s
+  STATUS_REPO="$(curl -fs --max-time 60 "http://127.0.0.1:$PORT/_status" 2>/dev/null | jq -r '.repo // empty' 2>/dev/null || true)"
+  if [ -n "$STATUS_REPO" ] && [ "$STATUS_REPO" != "$REPO" ]; then
+    echo "::warning::proxy identity mismatch (serves repo=$STATUS_REPO, expected=$REPO); not configuring substituter"
+    READY=0
+  elif [ -z "$STATUS_REPO" ]; then
+    echo "::warning::proxy status check failed (port $PORT)"
+    READY=0
   fi
 fi
 if [ "$READY" != 1 ]; then
@@ -102,20 +98,17 @@ require-sigs = false"
 
   # GNU/BSD 兼容的幂等 marker 替换：sed -i.bak + 删除备份
   apply_config() { # $1 = file, $2 = use sudo (1/0)
-    local file="$1" use_sudo="$2"
-    if [ "$use_sudo" = 1 ]; then
-      sudo sed -i.bak '/^# nix-cache begin$/,/^# nix-cache end$/d' "$file" 2>/dev/null || true
-      sudo rm -f "$file.bak" 2>/dev/null || true
-      if ! printf '\n# nix-cache begin\n%s\n# nix-cache end\n' "$BLOCK" | sudo tee -a "$file" >/dev/null; then
-        warn_to_summary "failed to write $file (nix.conf marker block)"
-      fi
+    local file="$1"
+    local -a sudo_cmd=()
+    if [ "$2" = 1 ]; then
+      sudo_cmd=(sudo)
     else
       mkdir -p "$(dirname "$file")"
-      sed -i.bak '/^# nix-cache begin$/,/^# nix-cache end$/d' "$file" 2>/dev/null || true
-      rm -f "$file.bak" 2>/dev/null || true
-      if ! printf '\n# nix-cache begin\n%s\n# nix-cache end\n' "$BLOCK" >>"$file"; then
-        warn_to_summary "failed to write $file (nix.conf marker block)"
-      fi
+    fi
+    "${sudo_cmd[@]}" sed -i.bak '/^# nix-cache begin$/,/^# nix-cache end$/d' "$file" 2>/dev/null || true
+    "${sudo_cmd[@]}" rm -f "$file.bak" 2>/dev/null || true
+    if ! printf '\n# nix-cache begin\n%s\n# nix-cache end\n' "$BLOCK" | "${sudo_cmd[@]}" tee -a "$file" >/dev/null; then
+      warn_to_summary "failed to write $file (nix.conf marker block)"
     fi
   }
 
