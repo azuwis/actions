@@ -9,7 +9,6 @@ import importlib.util
 import io
 import lzma
 import shutil
-import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -64,9 +63,6 @@ class FilterPathsTest(unittest.TestCase):
 
 class MakeNarinfoTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.cache_dir = Path(self.tmp.name) / "cache"
-        self.cache_dir.mkdir()
         self.info = {
             "narHash": SRI_ZERO,
             "narSize": 1000,
@@ -76,16 +72,9 @@ class MakeNarinfoTest(unittest.TestCase):
         }
         self.convert = lambda h: NIX32_ZERO
 
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def narinfo_file(self):
-        return self.cache_dir / (H32 + ".narinfo")
-
     def test_sri_converted_with_single_sha256_prefix(self):
-        push.make_narinfo(STORE, H32, 123, "f" * 52, self.info,
-                          str(self.cache_dir), convert=self.convert)
-        text = self.narinfo_file().read_text()
+        text = push.make_narinfo(STORE, H32, 123, "f" * 52, self.info,
+                                 convert=self.convert)
         self.assertIn("NarHash: sha256:" + NIX32_ZERO, text)
         self.assertEqual(text.count("NarHash: sha256:"), 1)
         self.assertIn("StorePath: " + STORE, text)
@@ -98,11 +87,6 @@ class MakeNarinfoTest(unittest.TestCase):
         self.assertIn("Deriver: " + "c" * 32 + "-pkg-1.0.drv", text)
         self.assertIn("Sig: own-key:sig1", text)
 
-    def test_returns_text_matches_file(self):
-        text = push.make_narinfo(STORE, H32, 1, "f" * 52, self.info,
-                                 str(self.cache_dir), convert=self.convert)
-        self.assertEqual(text, self.narinfo_file().read_text())
-
     def test_prefix_not_doubled_for_prefixed_narhash_but_convert_skipped(self):
         called = []
         info = dict(self.info)
@@ -112,8 +96,7 @@ class MakeNarinfoTest(unittest.TestCase):
             called.append(h)
             return NIX32_ZERO
 
-        push.make_narinfo(STORE, H32, 1, "f" * 52, info,
-                          str(self.cache_dir), convert=convert)
+        push.make_narinfo(STORE, H32, 1, "f" * 52, info, convert=convert)
         self.assertEqual(called, [])  # non-SRI input is passed through untouched
 
     def test_nar_size_zero_skips(self):
@@ -123,27 +106,25 @@ class MakeNarinfoTest(unittest.TestCase):
         with redirect_stderr(err):
             with self.assertRaises(push.NarinfoSkip) as cm:
                 push.make_narinfo(STORE, H32, 1, "f" * 52, info,
-                                  str(self.cache_dir), convert=self.convert)
+                                  convert=self.convert)
         self.assertEqual(cm.exception.code, 3)
         self.assertIn(f"narSize <= 0 for {STORE}; skipping", err.getvalue())
-        self.assertFalse(self.narinfo_file().exists())
 
     def test_empty_file_hash_skips(self):
         err = io.StringIO()
         with redirect_stderr(err):
             with self.assertRaises(push.NarinfoSkip) as cm:
                 push.make_narinfo(STORE, H32, 1, "", self.info,
-                                  str(self.cache_dir), convert=self.convert)
+                                  convert=self.convert)
         self.assertEqual(cm.exception.code, 4)
         self.assertIn(f"empty FileHash/NarHash for {STORE}; skipping", err.getvalue())
-        self.assertFalse(self.narinfo_file().exists())
 
     def test_empty_nar_hash_skips(self):
         info = dict(self.info)
         info["narHash"] = ""
         with self.assertRaises(push.NarinfoSkip) as cm:
             push.make_narinfo(STORE, H32, 1, "f" * 52, info,
-                              str(self.cache_dir), convert=self.convert)
+                              convert=self.convert)
         self.assertEqual(cm.exception.code, 4)
 
 
@@ -435,12 +416,9 @@ class RealNixTest(unittest.TestCase):
         self.assertNotIn("-", b32)
 
     def test_make_narinfo_end_to_end_with_real_convert(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            push.make_narinfo(STORE, H32, 1, "f" * 52,
-                              {"narHash": SRI_ZERO, "narSize": 10},
-                              tmp)
-            text = (Path(tmp) / (H32 + ".narinfo")).read_text()
-            self.assertIn("NarHash: sha256:" + NIX32_ZERO, text)
+        text = push.make_narinfo(STORE, H32, 1, "f" * 52,
+                                 {"narHash": SRI_ZERO, "narSize": 10})
+        self.assertIn("NarHash: sha256:" + NIX32_ZERO, text)
 
 class CompressStreamTest(unittest.TestCase):
     """Compression used by dump_nar: zstd on Python >= 3.14, xz fallback."""

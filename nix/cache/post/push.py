@@ -10,7 +10,7 @@ and a one-line summary annotation.
 Environment:
   INPUT_REPO / INPUT_TOKEN / INPUT_SIGNING_KEY / INPUT_PATHS  (action inputs)
   GITHUB_REPOSITORY / GITHUB_TOKEN                            (fallbacks)
-  NIXCACHE_REPO / NIXCACHE_PORT / NIXCACHE_PROXY_PID           (from nix/cache)
+  NIXCACHE_PROXY_PID                                          (from nix/cache)
   RUNNER_TEMP / RUNNER_OS / HOME
 
 Output discipline: all diagnostics (::warning::/::error::/::group::) go to
@@ -490,11 +490,11 @@ class NarinfoSkip(Exception):
 
 
 def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
-                 file_hash: str, info: dict, cache_dir: str,
+                 file_hash: str, info: dict,
                  convert=nix_hash_convert) -> str:
-    """Write `<cache_dir>/<hash_prefix>.narinfo` from one path-info dict and
-    return its text.  NarinfoSkip codes mirror the old shell exit codes:
-    3 = bad NarSize, 4 = empty FileHash/NarHash; unexpected errors raise."""
+    """Render one narinfo from a path-info dict.  NarinfoSkip codes mirror
+    the old shell exit codes: 3 = bad NarSize, 4 = empty FileHash/NarHash;
+    unexpected errors raise."""
     nar_hash = to_base32(info.get("narHash", ""), convert)
     nar_size = int(info.get("narSize", 0))
     if nar_size <= 0:
@@ -524,10 +524,7 @@ def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
     for sig in sigs:
         lines.append("Sig: " + sig)
 
-    text = "\n".join(lines) + "\n"
-    with open(os.path.join(cache_dir, hash_prefix + ".narinfo"), "w") as f:
-        f.write(text)
-    return text
+    return "\n".join(lines) + "\n"
 
 
 def filter_paths(rows, known_entries, own_key_name):
@@ -670,7 +667,7 @@ def fetch_existing_index(oci_token: str, repo: str) -> dict:
 
 def index_public_key(index: dict) -> str:
     """`.public_key // ""` over the existing index (non-string scalars are
-    rendered as text; invalid JSON -> "")."""
+    rendered as text)."""
     v = index.get("public_key", "")
     if v is None:
         return ""
@@ -795,7 +792,7 @@ def step_export_upload(paths, info_by_path: dict, oci_token: str, repo: str,
             continue
         file_hash = nix_hash_file(nar_file)
         try:
-            narinfo = make_narinfo(path, hash_prefix, size, file_hash, info, cache_dir)
+            narinfo = make_narinfo(path, hash_prefix, size, file_hash, info)
         except NarinfoSkip as e:
             warn(f"narinfo generation failed for {path} (exit {e.code}); skipping")
             remove_file(nar_file)
