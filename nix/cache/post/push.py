@@ -203,8 +203,7 @@ def store_scan_candidates():
 
 # --------------------------------------------------------------------- HTTP
 
-def http_request(method, url, headers=None, body=None, timeout=30.0,
-                 retries=0, retry_delay=2.0):
+def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
     """One HTTP request, following redirects and retrying like curl.
     Returns (status, headers, body).
 
@@ -222,13 +221,13 @@ def http_request(method, url, headers=None, body=None, timeout=30.0,
                                                body, timeout)
             if (status >= 500 or status in (408, 429)) and attempt < retries:
                 attempt += 1
-                time.sleep(retry_delay)
+                time.sleep(RETRY_DELAY)
                 continue
             return status, hdrs, data
         except (OSError, http.client.HTTPException):
             if attempt < retries:
                 attempt += 1
-                time.sleep(retry_delay)
+                time.sleep(RETRY_DELAY)
                 continue
             return 0, [], b""
 
@@ -269,32 +268,29 @@ def _send_request(method, url, headers, body, timeout=30.0):
         hops += 1
 
 
-def token_url(repo: str, registry: str = REGISTRY) -> str:
+def token_url(repo: str) -> str:
     scope = f"repository:{repo}/nix-cache:pull,push"
-    return f"https://{registry}/token?scope={scope}&service={registry}"
+    return f"https://{REGISTRY}/token?scope={scope}&service={REGISTRY}"
 
 
-def manifest_url(repo: str, tag: str, registry: str = REGISTRY) -> str:
-    return f"https://{registry}/v2/{repo}/nix-cache/manifests/{tag}"
+def manifest_url(repo: str, tag: str) -> str:
+    return f"https://{REGISTRY}/v2/{repo}/nix-cache/manifests/{tag}"
 
 
-def blob_url(repo: str, digest: str, registry: str = REGISTRY) -> str:
-    return f"https://{registry}/v2/{repo}/nix-cache/blobs/{digest}"
+def blob_url(repo: str, digest: str) -> str:
+    return f"https://{REGISTRY}/v2/{repo}/nix-cache/blobs/{digest}"
 
 
-def uploads_url(repo: str, registry: str = REGISTRY) -> str:
-    return f"https://{registry}/v2/{repo}/nix-cache/blobs/uploads/"
+def uploads_url(repo: str) -> str:
+    return f"https://{REGISTRY}/v2/{repo}/nix-cache/blobs/uploads/"
 
 
-def build_put_url(location: str, registry: str = REGISTRY,
-                  digest: str = "") -> str:
+def build_put_url(location: str, digest: str) -> str:
     """Join an upload Location into the final PUT URL (relative/absolute,
     `?`/`&` separator, `digest=` query parameter)."""
-    url = location
-    if url.startswith("/"):
-        url = f"https://{registry}{url}"
-    sep = "&" if "?" in url else "?"
-    return f"{url}{sep}digest={digest}"
+    url = f"https://{REGISTRY}{location}" if location.startswith("/") \
+        else location
+    return f"{url}{'&' if '?' in url else '?'}digest={digest}"
 
 
 def oci_get_token(repo: str, token: str) -> str:
@@ -302,7 +298,7 @@ def oci_get_token(repo: str, token: str) -> str:
     st, _, body = http_request(
         "GET", token_url(repo),
         headers={"Authorization": auth},
-        timeout=30.0, retries=MAX_RETRIES, retry_delay=RETRY_DELAY,
+        timeout=30.0, retries=MAX_RETRIES,
     )
     if st == 200:
         try:
@@ -333,7 +329,7 @@ def put_manifest(tag: str, manifest_body, token: str, repo: str) -> None:
         "PUT", manifest_url(repo, tag),
         headers={"Authorization": f"Bearer {token}",
                  "Content-Type": MANIFEST_MEDIA_TYPE},
-        body=body, timeout=60.0, retries=MAX_RETRIES, retry_delay=RETRY_DELAY,
+        body=body, timeout=60.0, retries=MAX_RETRIES,
     )
     if st not in (201, 200):
         fail_or_skip(st, f"OCI manifest push failed ({tag})")
@@ -359,14 +355,14 @@ def push_blob(file_path: str, digest: str, token: str, repo: str) -> None:
     st, hdrs, _ = http_request(
         "POST", uploads_url(repo),
         headers={"Authorization": f"Bearer {token}"},
-        body=b"", timeout=30.0, retries=MAX_RETRIES, retry_delay=RETRY_DELAY,
+        body=b"", timeout=30.0, retries=MAX_RETRIES,
     )
     if st != 202:
         fail_or_skip(st, "failed to initiate blob upload")
     location = header_value(hdrs, "Location")
     if not location:
         fail_or_skip(0, "no upload location returned by registry")
-    put_url = build_put_url(location, REGISTRY, digest)
+    put_url = build_put_url(location, digest)
     size = os.path.getsize(file_path)
     with open(file_path, "rb") as f:
         st, _, _ = http_request(
@@ -374,7 +370,7 @@ def push_blob(file_path: str, digest: str, token: str, repo: str) -> None:
             headers={"Authorization": f"Bearer {token}",
                      "Content-Type": "application/octet-stream",
                      "Content-Length": str(size)},
-            body=f, timeout=300.0, retries=MAX_RETRIES, retry_delay=RETRY_DELAY,
+            body=f, timeout=300.0, retries=MAX_RETRIES,
         )
     if st not in (201, 202):
         fail_or_skip(st, f"blob upload failed for {digest}")

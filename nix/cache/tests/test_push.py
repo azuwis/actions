@@ -211,25 +211,25 @@ class FailOrSkipTest(unittest.TestCase):
 class UrlTest(unittest.TestCase):
     def test_token_url_scope_and_service(self):
         self.assertEqual(
-            push.token_url("MyOrg/MyRepo", "ghcr.io"),
+            push.token_url("MyOrg/MyRepo"),
             "https://ghcr.io/token?scope=repository:MyOrg/MyRepo/nix-cache:"
             "pull,push&service=ghcr.io")
 
     def test_location_relative_without_query(self):
         self.assertEqual(
-            push.build_put_url("/v2/o/r/nix-cache/blobs/uploads/u-1", "ghcr.io",
+            push.build_put_url("/v2/o/r/nix-cache/blobs/uploads/u-1",
                                "sha256:abc"),
             "https://ghcr.io/v2/o/r/nix-cache/blobs/uploads/u-1?digest=sha256:abc")
 
     def test_location_relative_with_query_uses_ampersand(self):
         self.assertEqual(
-            push.build_put_url("/v2/o/r/blobs/uploads/u-2?_state=1", "ghcr.io",
+            push.build_put_url("/v2/o/r/blobs/uploads/u-2?_state=1",
                                "sha256:abc"),
             "https://ghcr.io/v2/o/r/blobs/uploads/u-2?_state=1&digest=sha256:abc")
 
     def test_location_absolute_left_untouched(self):
         self.assertEqual(
-            push.build_put_url("https://storage.example.com/u-3?x=1", "ghcr.io",
+            push.build_put_url("https://storage.example.com/u-3?x=1",
                                "sha256:abc"),
             "https://storage.example.com/u-3?x=1&digest=sha256:abc")
 
@@ -276,7 +276,7 @@ class HttpRequestTest(unittest.TestCase):
     curl --retry 3 --retry-all-errors semantics; retries=0 call sites (HEAD,
     manifest GETs) never retry."""
 
-    def run_request(self, scenario, retries, method="GET", body=None, retry_delay=0.0):
+    def run_request(self, scenario, retries, method="GET", body=None):
         conns = []
 
         def factory(host, port, timeout=None):
@@ -285,9 +285,9 @@ class HttpRequestTest(unittest.TestCase):
             return conn
 
         url = "https://ghcr.io/v2/o/r/nix-cache/manifests/cache-index"
-        with mock.patch("http.client.HTTPSConnection", side_effect=factory):
-            result = push.http_request(method, url, body=body, retries=retries,
-                                       retry_delay=retry_delay)
+        with mock.patch("http.client.HTTPSConnection", side_effect=factory), \
+                mock.patch.object(push, "RETRY_DELAY", 0):
+            result = push.http_request(method, url, body=body, retries=retries)
         return result, conns
 
     def test_5xx_retried_then_success(self):
