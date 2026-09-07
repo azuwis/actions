@@ -22,24 +22,20 @@ NIXCACHE_INDEX_DIR="$INDEX_DIR" NIXCACHE_UPSTREAM="" \
   python3 "$GITHUB_ACTION_PATH/nixcache-proxy.py" >"$INDEX_DIR/proxy.log" 2>&1 &
 PROXY_PID=$!
 
-if kill -0 "$PROXY_PID" 2>/dev/null; then
-  # _status blocks until the index prefetch completes
-  if ! curl -fs --max-time 60 --retry 15 --retry-delay 1 --retry-connrefused \
-    -o /dev/null "http://127.0.0.1:$NIXCACHE_PORT/_status"; then
-    warn "Proxy status check failed, skipping substituter configuration"
-    exit 0
-  fi
-else
+if ! kill -0 "$PROXY_PID" 2>/dev/null; then
   warn "Proxy failed to start, skipping substituter configuration"
+  exit 0
+fi
+
+# _status blocks until the index prefetch completes
+if ! curl -fs --max-time 60 --retry 15 --retry-delay 1 --retry-connrefused \
+  -o /dev/null "http://127.0.0.1:$NIXCACHE_PORT/_status"; then
+  warn "Proxy status check failed, skipping substituter configuration"
   exit 0
 fi
 
 BLOCK="extra-substituters = http://127.0.0.1:$NIXCACHE_PORT"
 if [ -n "$NIXCACHE_PUBLIC_KEY" ]; then
-  IDX_KEY="$(curl -fs --max-time 10 "http://127.0.0.1:$NIXCACHE_PORT/public-key" 2>/dev/null | tr -d '\n' || true)"
-  if [ -n "$IDX_KEY" ] && [ "$IDX_KEY" != "$NIXCACHE_PUBLIC_KEY" ]; then
-    warn "index advertises a different public key than the public_key input; trusting the local input"
-  fi
   BLOCK="$BLOCK
 extra-trusted-public-keys = $NIXCACHE_PUBLIC_KEY"
 else
@@ -84,11 +80,7 @@ if [ -e /nix/var/nix/daemon-socket ]; then
   esac
 fi
 
-if nix show-config 2>/dev/null | grep -q "127.0.0.1:$NIXCACHE_PORT"; then
-  echo "::group::nix/cache"
-  echo "OCI substituter configured: http://127.0.0.1:$NIXCACHE_PORT (repo=$NIXCACHE_REPO)"
-  [ -n "$NIXCACHE_PUBLIC_KEY" ] || echo "unsigned mode: require-sigs = false"
-  echo "::endgroup::"
-else
-  warn "nix does not report the cache substituter (port $NIXCACHE_PORT); check nix.conf and daemon restart"
-fi
+echo "::group::nix/cache"
+echo "OCI substituter configured: http://127.0.0.1:$NIXCACHE_PORT (repo=$NIXCACHE_REPO)"
+[ -n "$NIXCACHE_PUBLIC_KEY" ] || echo "unsigned mode: require-sigs = false"
+echo "::endgroup::"
