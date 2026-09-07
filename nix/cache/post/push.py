@@ -101,9 +101,14 @@ def chunks(seq, n):
         yield seq[i:i + n]
 
 
-def remove_file(path: str) -> None:
-    with contextlib.suppress(OSError):
-        os.remove(path)
+@contextlib.contextmanager
+def log_group(name: str):
+    """Open/close one GitHub Actions log group around `name`'s work."""
+    print(f"::group::{name}", file=sys.stderr)
+    try:
+        yield
+    finally:
+        print("::endgroup::", file=sys.stderr)
 
 
 def header_value(headers, name: str) -> str:
@@ -201,6 +206,13 @@ def store_scan_candidates():
 
 
 # --------------------------------------------------------------------- HTTP
+# Hand-rolled on purpose: urllib.request cannot replace this transport.
+# Its HTTPRedirectHandler refuses to follow 307/308 for PUT/POST
+# (https://bugs.python.org/issue47150), drops the request body on any
+# redirect it does follow, and never strips Authorization when a redirect
+# leaves the host.  GHCR blob uploads redirect (307) to a storage host, so
+# following with the body replayed and without the bearer token is exactly
+# what this layer must do.  Keep it in one place and test it here.
 
 def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
     """One HTTP request, following redirects and retrying like curl.
@@ -443,25 +455,23 @@ def filter_paths(rows, known_entries, own_key_name):
     """(path, signatures) rows -> (keep, missing_own_signature).
 
     Rules: skip paths already in the index; with a key skip paths that
-    carry any signature from another cache, keep own-signed, and report paths
-    missing the own-key signature as an error; without a key skip everything
-    signed.
+    carry any signature from another cache, keep own-signed, and report
+    paths left with no signatures as an error; without a key skip
+    everything signed.
     """
     keep = []
     missing = []
     for path, sigs in rows:
-        h = os.path.basename(path)[:32]
-        if h in known_entries:
+        if os.path.basename(path)[:32] in known_entries:
             continue
         if own_key_name:
             if any(not s.startswith(own_key_name + ":") for s in sigs):
+                continue                     # another cache signed it
+            if not sigs:
+                missing.append(path)         # signing did not take effect
                 continue
-            if not any(s.startswith(own_key_name + ":") for s in sigs):
-                missing.append(path)
-                continue
-        else:
-            if sigs:
-                continue
+        elif sigs:
+            continue
         keep.append(path)
     return keep, missing
 
@@ -636,39 +646,39 @@ def export_upload(paths, info_by_path: dict, token: str, repo: str,
             continue
         hash_prefix = os.path.basename(path)[:32]
         nar_file = os.path.join(nar_dir, f"{hash_prefix}.nar.{COMPRESSION_EXT}")
-        print(f"::group::nix/cache export {hash_prefix}", file=sys.stderr)
-        try:
-            if not dump_nar(path, nar_file):
-                raise SkipPath(f"failed to dump {path}")
-            size = os.path.getsize(nar_file)
-            if size > MAX_NAR_SIZE:
-                raise SkipPath(f"{path} nar missing or exceeds ~10GiB GHCR "
-                               "blob limit")
-            nar_digest = blob_digest(nar_file)
+        with log_group(f"nix/cache export {hash_prefix}"):
             try:
-                narinfo = make_narinfo(path, hash_prefix, size,
-                                       nix_hash_convert(nar_digest), info)
-            except Fatal:
-                raise
-            except Exception as e:
-                raise SkipPath(
-                    f"narinfo generation failed for {path}: {e}") from None
-            push_blob(nar_file, nar_digest, token, repo)
-            new_entries[hash_prefix] = {
-                "name": os.path.basename(path).split("-", 1)[-1],
-                "narinfo": narinfo,
-                "nar_digest": nar_digest,
-                "nar_size": size,
-                "added": generated,
-            }
-            uploaded += 1
-            print(f"uploaded {hash_prefix} ({size} bytes)", file=sys.stderr)
-        except SkipPath as e:
-            warn(f"{e}; skipping")
-            skipped += 1
-        finally:
-            remove_file(nar_file)
-            print("::endgroup::", file=sys.stderr)
+                if not dump_nar(path, nar_file):
+                    raise SkipPath(f"failed to dump {path}")
+                size = os.path.getsize(nar_file)
+                if size > MAX_NAR_SIZE:
+                    raise SkipPath(f"{path} nar exceeds ~10GiB GHCR blob "
+                                   "limit")
+                nar_digest = blob_digest(nar_file)
+                try:
+                    narinfo = make_narinfo(path, hash_prefix, size,
+                                           nix_hash_convert(nar_digest), info)
+                except SkipPath:
+                    raise
+                except Exception as e:
+                    raise SkipPath(
+                        f"narinfo generation failed for {path}: {e}") from None
+                push_blob(nar_file, nar_digest, token, repo)
+                new_entries[hash_prefix] = {
+                    "name": os.path.basename(path).split("-", 1)[-1],
+                    "narinfo": narinfo,
+                    "nar_digest": nar_digest,
+                    "nar_size": size,
+                    "added": generated,
+                }
+                uploaded += 1
+                print(f"uploaded {hash_prefix} ({size} bytes)", file=sys.stderr)
+            except SkipPath as e:
+                warn(f"{e}; skipping")
+                skipped += 1
+            finally:
+                with contextlib.suppress(OSError):
+                    os.remove(nar_file)
     return uploaded, skipped, new_entries
 
 
@@ -755,9 +765,8 @@ def run(config: "Config", work_dir: str, cache_dir: str) -> None:
         print("Nothing to upload")
         return
     if config.signing_key:
-        print("::group::nix/cache sign", file=sys.stderr)
-        sign_paths(os.path.join(work_dir, "signing.key"), cands)
-        print("::endgroup::", file=sys.stderr)
+        with log_group("nix/cache sign"):
+            sign_paths(os.path.join(work_dir, "signing.key"), cands)
     keep, info_by_path = filter_candidates(cands, existing, own_key_name)
     if not keep:
         print("Nothing to upload")

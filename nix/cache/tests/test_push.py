@@ -5,6 +5,7 @@ Loaded via importlib from the file path (the module lives in `post/`, not in
 touch subprocesses/network either injects a fake or is skipped when nix is
 not on PATH (the CI unit-tests step runs before `./nix` installs anything).
 """
+import http.server
 import importlib.util
 import io
 import lzma
@@ -12,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -204,8 +206,8 @@ class ExportUploadTest(unittest.TestCase):
             self.assertEqual(list(Path(d, "nar").iterdir()), [])
         self.assertEqual(result, (0, 1, {}))
         self.assertEqual(warn.call_args_list,
-                         [mock.call(f"{STORE} nar missing or exceeds ~10GiB "
-                                    "GHCR blob limit; skipping")])
+                         [mock.call(f"{STORE} nar exceeds ~10GiB GHCR blob "
+                                    "limit; skipping")])
         push_blob.assert_not_called()
         self.assertEqual(err.getvalue().splitlines(),
                          [f"::group::nix/cache export {H32}", "::endgroup::"])
@@ -400,171 +402,216 @@ class UrlTest(unittest.TestCase):
             "https://storage.example.com/u-3?x=1&digest=sha256:abc")
 
 
-class _FakeResponse:
-    def __init__(self, status, body=b"", headers=()):
-        self.status = status
-        self._body = body
-        self._headers = list(headers)
+class _ScenarioHandler(http.server.BaseHTTPRequestHandler):
+    """Serve a scripted scenario, recording every request as
+    (method, path, body, headers-dict).  A scenario item that is an
+    exception is raised before any response bytes are written, which the
+    client observes as a transport error."""
+    scenario = []       # shared script: (status, [(name, value)], body) or Exception
+    requests = []       # shared record of requests seen
 
-    def read(self):
-        return self._body
-
-    def getheaders(self):
-        return self._headers
-
-    def close(self):
-        pass
-
-
-class _FakeConn:
-    def __init__(self, host, port, timeout=None, scenario=()):
-        self.host, self.port, self.timeout = host, port, timeout
-        self.scenario = scenario
-        self.requested = []
-
-    def request(self, method, path, body=None, headers=None):
-        # consume a file body the way http.client does, then record the bytes
-        data = body.read() if hasattr(body, "read") else body
-        self.requested.append((method, path, data, headers))
-
-    def getresponse(self):
-        item = self.scenario.pop(0)
-        if isinstance(item, Exception):
+    def _handle(self):
+        body = self._read_body()
+        _ScenarioHandler.requests.append(
+            (self.command, self.path, body, dict(self.headers.items())))
+        item = _ScenarioHandler.scenario.pop(0)
+        if isinstance(item, BaseException):
             raise item
-        return item
+        status, headers, data = item
+        self.send_response(status)
+        for name, value in headers:
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if data and self.command != "HEAD":
+            self.wfile.write(data)
+
+    def _read_body(self):
+        if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+            body = b""
+            while True:
+                size = int(self.rfile.readline().split(b";")[0], 16)
+                if not size:
+                    self.rfile.readline()
+                    return body
+                body += self.rfile.read(size)
+                self.rfile.readline()
+        return self.rfile.read(int(self.headers.get("Content-Length") or 0))
+
+    do_GET = do_HEAD = do_PUT = do_POST = _handle
+
+    def log_message(self, *args):
+        pass
+
+
+class _QuietServer(http.server.ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        pass                     # scripted transport errors are expected
+
+
+class _LocalServer:
+    """A scripted HTTP server on 127.0.0.1; push.py's HTTPSConnection is
+    patched to connect here while URL hostnames stay virtual."""
+
+    def __init__(self, scenario):
+        _ScenarioHandler.scenario = list(scenario)
+        _ScenarioHandler.requests = []
+        self.httpd = _QuietServer(("127.0.0.1", 0), _ScenarioHandler)
+        self.port = self.httpd.server_address[1]
+        # short poll so shutdown() returns quickly instead of ~0.5s per test
+        self.thread = threading.Thread(
+            target=self.httpd.serve_forever,
+            kwargs={"poll_interval": 0.05}, daemon=True)
+        self.thread.start()
 
     def close(self):
-        pass
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
 
 class HttpRequestTest(unittest.TestCase):
-    """http_request retry semantics: 5xx and transport errors retried with
-    curl --retry 3 --retry-all-errors semantics; retries=0 call sites (HEAD,
-    manifest GETs) never retry."""
+    """http_request semantics against a real local HTTP server: 408/429/5xx
+    and transport errors retried like curl --retry 3 --retry-all-errors;
+    GET/HEAD follow any 30x, PUT/POST only 307/308 replaying the body and
+    dropping Authorization when a redirect leaves the host; retries=0 call
+    sites never retry."""
 
-    def run_request(self, scenario, retries, method="GET", body=None):
-        conns = []
+    URL = "https://ghcr.io/v2/o/r/nix-cache/manifests/cache-index"
 
-        def factory(host, port, timeout=None):
-            conn = _FakeConn(host, port, timeout, scenario)
-            conns.append(conn)
-            return conn
+    def run_request(self, scenario, retries, method="GET", body=None,
+                    headers=None):
+        with _LocalServer(scenario) as server:
+            def factory(host, port, timeout=None):
+                return http.client.HTTPConnection(
+                    "127.0.0.1", server.port, timeout=timeout)
 
-        url = "https://ghcr.io/v2/o/r/nix-cache/manifests/cache-index"
-        with mock.patch("http.client.HTTPSConnection", side_effect=factory), \
-                mock.patch.object(push, "RETRY_DELAY", 0):
-            result = push.http_request(method, url, body=body, retries=retries)
-        return result, conns
+            with mock.patch("http.client.HTTPSConnection",
+                            side_effect=factory), \
+                    mock.patch.object(push, "RETRY_DELAY", 0):
+                result = push.http_request(method, self.URL, headers=headers,
+                                           body=body, retries=retries)
+            requests = list(_ScenarioHandler.requests)
+        return result, requests
 
     def test_5xx_retried_then_success(self):
-        (status, _, body), conns = self.run_request(
-            [_FakeResponse(500), _FakeResponse(200, b"ok")], retries=3)
+        (status, _, body), requests = self.run_request(
+            [(500, [], b""), (200, [], b"ok")], retries=3)
         self.assertEqual((status, body), (200, b"ok"))
-        self.assertEqual(len(conns), 2)  # initial + 1 retry
+        self.assertEqual(len(requests), 2)       # initial + 1 retry
 
     def test_5xx_retry_budget_is_three(self):
-        (status, _, _), conns = self.run_request(
-            [_FakeResponse(500)] * 4, retries=3)
+        (status, _, _), requests = self.run_request(
+            [(500, [], b"")] * 4, retries=3)
         self.assertEqual(status, 500)
-        self.assertEqual(len(conns), 4)  # curl --retry 3 -> 4 attempts
+        self.assertEqual(len(requests), 4)       # curl --retry 3 -> 4 attempts
 
     def test_408_and_429_retried_then_success(self):
         # curl --retry-all-errors retries 408/429 as well (like 5xx)
-        (status, _, body), conns = self.run_request(
-            [_FakeResponse(429), _FakeResponse(408), _FakeResponse(200, b"ok")],
-            retries=3)
+        (status, _, body), requests = self.run_request(
+            [(429, [], b""), (408, [], b""), (200, [], b"ok")], retries=3)
         self.assertEqual((status, body), (200, b"ok"))
-        self.assertEqual(len(conns), 3)
+        self.assertEqual(len(requests), 3)
 
     def test_429_exhausts_budget_like_5xx(self):
-        (status, _, _), conns = self.run_request(
-            [_FakeResponse(429)] * 4, retries=3)
+        (status, _, _), requests = self.run_request(
+            [(429, [], b"")] * 4, retries=3)
         self.assertEqual(status, 429)
-        self.assertEqual(len(conns), 4)
+        self.assertEqual(len(requests), 4)
 
     def test_4xx_not_retried(self):
-        (status, _, _), conns = self.run_request([_FakeResponse(403)], retries=3)
+        (status, _, _), requests = self.run_request([(403, [], b"")], retries=3)
         self.assertEqual(status, 403)
-        self.assertEqual(len(conns), 1)
+        self.assertEqual(len(requests), 1)
 
     def test_get_follows_307_redirect(self):
-        (status, _, body), conns = self.run_request(
-            [_FakeResponse(307, headers=[("Location", "https://cdn.example.com/next")]),
-             _FakeResponse(200, b"ok")], retries=3)
+        (status, _, body), requests = self.run_request(
+            [(307, [("Location", "https://cdn.example.com/next")], b""),
+             (200, [], b"ok")], retries=3)
         self.assertEqual((status, body), (200, b"ok"))
-        self.assertEqual(len(conns), 2)                # one attempt, one hop
-        self.assertEqual(conns[1].host, "cdn.example.com")
+        self.assertEqual(len(requests), 2)       # one attempt, one hop
+
+    def test_cross_host_redirect_strips_authorization(self):
+        # a redirect leaving ghcr.io must not carry the bearer token along
+        (status, _, _), requests = self.run_request(
+            [(302, [("Location", "https://cdn.example.com/next")], b""),
+             (200, [], b"ok")], retries=0,
+            headers={"Authorization": "Bearer tok"})
+        self.assertEqual(status, 200)
+        self.assertEqual(requests[0][3].get("Authorization"), "Bearer tok")
+        self.assertNotIn("Authorization", requests[1][3])
 
     def test_relative_location_resolved_absolute(self):
-        (status, _, _), conns = self.run_request(
-            [_FakeResponse(307, headers=[("Location", "/v2/o/r/blobs/sha256:abc")]),
-             _FakeResponse(200, b"ok")], retries=0)
+        (status, _, _), requests = self.run_request(
+            [(307, [("Location", "/v2/o/r/blobs/sha256:abc")], b""),
+             (200, [], b"ok")], retries=0)
         self.assertEqual(status, 200)
-        self.assertEqual(conns[1].host, "ghcr.io")
-        self.assertEqual(conns[1].requested[0][1], "/v2/o/r/blobs/sha256:abc")
+        self.assertEqual(requests[1][1], "/v2/o/r/blobs/sha256:abc")
 
     def test_redirect_chain_limited_to_five_hops(self):
-        (status, _, _), conns = self.run_request(
-            [_FakeResponse(302, headers=[("Location", "/loop")])] * 6,
-            retries=0)
-        self.assertEqual(status, 302)                    # 6th hop not followed
-        self.assertEqual(len(conns), 6)                  # 1 + 5 follows
+        (status, _, _), requests = self.run_request(
+            [(302, [("Location", "/loop")], b"")] * 6, retries=0)
+        self.assertEqual(status, 302)            # 6th hop not followed
+        self.assertEqual(len(requests), 6)       # 1 + 5 follows
 
     def test_head_follows_redirect(self):
-        (status, _, _), conns = self.run_request(
-            [_FakeResponse(307, headers=[("Location", "/next")]),
-             _FakeResponse(404)], retries=0, method="HEAD")
+        (status, _, _), requests = self.run_request(
+            [(307, [("Location", "/next")], b""),
+             (404, [], b"")], retries=0, method="HEAD")
         self.assertEqual(status, 404)
-        self.assertEqual(len(conns), 2)
+        self.assertEqual(len(requests), 2)
 
     def test_put_follows_307_308_with_body_replay(self):
         payload = b"payload" * 100
-        f = io.BytesIO(payload)
-        (status, _, _), conns = self.run_request(
-            [_FakeResponse(307, headers=[("Location", "/up/1")]),
-             _FakeResponse(308, headers=[("Location", "/up/2")]),
-             _FakeResponse(201)], retries=0, method="PUT", body=f)
+        (status, _, _), requests = self.run_request(
+            [(307, [("Location", "/up/1")], b""),
+             (308, [("Location", "/up/2")], b""),
+             (201, [], b"")], retries=0, method="PUT",
+            body=io.BytesIO(payload))
         self.assertEqual(status, 201)
-        self.assertEqual(len(conns), 3)                  # 1 + 2 hops
-        for conn in conns:                               # full replay each hop
-            self.assertEqual(conn.requested[0][2], payload)
+        self.assertEqual(len(requests), 3)       # 1 + 2 hops
+        for request in requests:                 # full replay each hop
+            self.assertEqual(request[2], payload)
 
     def test_put_302_not_followed(self):
         # GET/HEAD follow any 30x; PUT/POST only 307/308 (method preserved)
-        (status, _, _), conns = self.run_request(
-            [_FakeResponse(302, headers=[("Location", "/up")])],
-            retries=0, method="PUT")
+        (status, _, _), requests = self.run_request(
+            [(302, [("Location", "/up")], b"")], retries=0, method="PUT")
         self.assertEqual(status, 302)
-        self.assertEqual(len(conns), 1)
+        self.assertEqual(len(requests), 1)
 
     def test_retries_zero_returns_immediately(self):
         # HEAD and fetch/readback GETs pass retries=0: a 500 surfaces as-is
-        (status, _, _), conns = self.run_request([_FakeResponse(500)], retries=0)
+        (status, _, _), requests = self.run_request([(500, [], b"")], retries=0)
         self.assertEqual(status, 500)
-        self.assertEqual(len(conns), 1)
+        self.assertEqual(len(requests), 1)
 
     def test_transport_error_retried_then_success(self):
-        (status, _, body), conns = self.run_request(
-            [ConnectionError("boom"), _FakeResponse(200, b"ok")], retries=3)
+        (status, _, body), requests = self.run_request(
+            [ConnectionError("boom"), (200, [], b"ok")], retries=3)
         self.assertEqual((status, body), (200, b"ok"))
-        self.assertEqual(len(conns), 2)
+        self.assertEqual(len(requests), 2)
 
     def test_transport_error_exhausted_returns_zero(self):
-        (status, _, _), conns = self.run_request(
+        (status, _, _), requests = self.run_request(
             [ConnectionError("boom")] * 3, retries=2)
         self.assertEqual(status, 0)
-        self.assertEqual(len(conns), 3)
+        self.assertEqual(len(requests), 3)
 
     def test_retried_put_replays_file_body_from_zero(self):
         payload = b"payload" * 100
-        f = io.BytesIO(payload)
-        (status, _, _), conns = self.run_request(
-            [_FakeResponse(503), _FakeResponse(201)], retries=3, method="PUT",
-            body=f)
+        (status, _, _), requests = self.run_request(
+            [(503, [], b""), (201, [], b"")], retries=3, method="PUT",
+            body=io.BytesIO(payload))
         self.assertEqual(status, 201)
         # each attempt must have sent the full payload (seek(0) before request)
-        for conn in conns:
-            self.assertEqual(conn.requested[0][2], payload)
+        for request in requests:
+            self.assertEqual(request[2], payload)
 
 
 @unittest.skipUnless(shutil.which("nix"), "nix not on PATH")
