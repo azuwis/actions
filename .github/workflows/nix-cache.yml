@@ -1,0 +1,114 @@
+name: Nix Cache
+permissions: {}
+concurrency:
+  group: nix-cache
+on:
+  pull_request:
+    paths:
+      - 'nix-cache/**'
+      - .github/workflows/nix-cache.yml
+  push:
+    branches:
+      - '*'
+    paths:
+      - 'nix-cache/**'
+      - .github/workflows/nix-cache.yml
+  workflow_dispatch:
+jobs:
+  nix_cache:
+    # fork guard: a fork PR gets a read-only token, so the push would always
+    # fail; skip (dependent jobs are skipped through needs)
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    permissions:
+      packages: write
+    runs-on: ubuntu-latest
+    outputs:
+      leaf: ${{ steps.build.outputs.leaf }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./nix
+      - uses: ./nix-cache
+      - name: Build test leaf
+        id: build
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-flake"
+          cat > "$RUNNER_TEMP/ci-flake/flake.nix" <<EOF
+          {
+            # pin the rev: a moving branch drifts between runs, so the leaf is not reproducible
+            inputs.nixpkgs.url = "github:NixOS/nixpkgs?rev=5dfba6236110080a54247d6460bc2ff5dda939cc";
+            outputs = { self, nixpkgs }: {
+              packages.x86_64-linux.cache-test = nixpkgs.legacyPackages.x86_64-linux.stdenv.mkDerivation {
+                pname = "cache-test";
+                # unique version per run/attempt -> unique leaf, so the index assertion proves
+                # this run really pushed (see the 307 redirect fix in push.py for the false-pass)
+                version = "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT";
+                buildCommand = "mkdir -p \$out && echo hello > \$out/hello";
+              };
+            };
+          }
+          EOF
+          cd "$RUNNER_TEMP/ci-flake"
+          # stdout carries only the out-path (plan info goes to stderr); no pipe, no pipefail
+          echo "leaf=$(nix build .#cache-test --no-link --print-out-paths)" >> "$GITHUB_OUTPUT"
+      - uses: ./nix-cache/post
+        with:
+          paths: ${{ steps.build.outputs.leaf }}
+      - name: Assert cache-index contains leaf
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LEAF: ${{ steps.build.outputs.leaf }}
+        run: |
+          hash="${LEAF##*/}"; hash="${hash:0:32}"
+          repo="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          token="$(curl -fsSL -u "token:${GH_TOKEN}" \
+            "https://ghcr.io/token?scope=repository:${repo}/nix-cache:pull&service=ghcr.io" \
+            | jq -r '.token')"
+          for _ in $(seq 1 30); do
+            digest="$(curl -fsSL -H "Authorization: Bearer $token" \
+              -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+              "https://ghcr.io/v2/${repo}/nix-cache/manifests/cache-index" \
+              | jq -r '.layers[0].digest // empty' || true)"
+            if [ -n "$digest" ] && curl -fsSL -H "Authorization: Bearer $token" \
+              "https://ghcr.io/v2/${repo}/nix-cache/blobs/$digest" \
+              | jq -e --arg h "$hash" '.entries[$h]' >/dev/null; then
+              echo "cache-index contains $hash"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "leaf $hash not found in cache-index" >&2
+          exit 1
+  nix_cache_with_cache:
+    needs: nix_cache
+    permissions:
+      packages: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./nix
+      - uses: ./nix-cache
+      - name: Assert leaf substitutes from OCI cache
+        env:
+          LEAF: ${{ needs.nix_cache.outputs.leaf }}
+        run: |
+          hash="${LEAF##*/}"; hash="${hash:0:32}"
+          port="${NIXCACHE_PORT:?nix-cache action did not configure a substituter}"
+          # force an index refresh in case setup picked up a stale manifest
+          curl -fsS -X POST "http://127.0.0.1:$port/_refresh" >/dev/null || true
+          # the restored store cache may already hold the leaf; delete it so only substitution fits
+          nix store delete "$LEAF" 2>/dev/null || true
+          nix-store --realise "$LEAF" >"$RUNNER_TEMP/realise.log" 2>&1
+          # main assertion 1: ask our proxy directly from the CI side
+          curl -fsS "http://127.0.0.1:$port/$hash.narinfo" >/dev/null \
+            || { echo "proxy did not serve $hash.narinfo"; exit 1; }
+          # main assertion 2: the proxy log shows the narinfo GET (server-side evidence)
+          grep -q "$hash.narinfo" "$RUNNER_TEMP/nix-cache-proxy/proxy.log" \
+            || { echo "proxy.log has no narinfo GET for $hash"; exit 1; }
+          # main assertion 3: Nix copied the leaf from the proxy instead of building it (client side)
+          grep -q "copying path '$LEAF' from 'http://127.0.0.1:$port'" \
+            "$RUNNER_TEMP/realise.log" \
+            || { echo "leaf was not copied from the proxy"; exit 1; }
