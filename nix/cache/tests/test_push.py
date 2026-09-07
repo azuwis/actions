@@ -175,16 +175,49 @@ class MergeIndexTest(unittest.TestCase):
         self.assertEqual(index["public_key"], "new-key")
 
     def test_dirty_existing_json_rejected(self):
-        """Corrupt existing index is Fatal, not silently empty."""
-        for blob in (b"not json", b"null", b"[1, 2]", b""):
+        """Corrupt existing index is Fatal, not silently empty.  `entries` is
+        validated here (the parse boundary) so filter_candidates need not;
+        a falsy entries normalizes to {} exactly as merge_index does."""
+        for blob in (b"not json", b"null", b"[1, 2]", b"",
+                     b'{"entries": [1, 2]}', b'{"entries": "x"}'):
             with self.assertRaises(push.Fatal) as cm:
                 push.load_existing_index(blob)
             self.assertEqual(str(cm.exception),
                              "failed to parse existing cache index")
 
+    def test_absent_or_empty_entries_accepted(self):
+        for blob in (b'{}', b'{"entries": null}', b'{"entries": []}'):
+            self.assertIsInstance(push.load_existing_index(blob), dict)
+
     def test_existing_index_loaded(self):
         self.assertEqual(push.load_existing_index(b'{"public_key": "k"}'),
                          {"public_key": "k"})
+
+
+class IndexPublicKeyTest(unittest.TestCase):
+    """Gates the "signed index but no key" SkipRound and the key-rotation
+    Fatal, so a falsy or absent public_key must read as unsigned."""
+
+    def test_text_key_returned(self):
+        self.assertEqual(push.index_public_key({"public_key": "k:abc"}),
+                         "k:abc")
+
+    def test_absent_or_falsy_reads_as_unsigned(self):
+        for index in ({}, {"public_key": None}, {"public_key": ""}):
+            self.assertEqual(push.index_public_key(index), "")
+
+
+class LayerDigestTest(unittest.TestCase):
+    def test_first_layer_digest(self):
+        self.assertEqual(
+            push.layer_digest(b'{"layers": [{"digest": "sha256:abc"}]}'),
+            "sha256:abc")
+
+    def test_malformed_shapes_yield_empty(self):
+        for body in (b"", b"null", b"[]", b"{}", b'{"layers": []}',
+                     b'{"layers": ["x"]}', b'{"layers": null}',
+                     b'{"layers": [null]}'):
+            self.assertEqual(push.layer_digest(body), "")
 
 
 class FailOrSkipTest(unittest.TestCase):

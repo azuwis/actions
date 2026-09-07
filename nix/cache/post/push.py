@@ -16,6 +16,7 @@ NIXCACHE_SIGNING_KEY / NIXCACHE_PATHS (action inputs), GITHUB_TOKEN
 (runner-provided), RUNNER_TEMP.
 """
 import base64
+import contextlib
 import hashlib
 import http.client
 import json
@@ -101,10 +102,8 @@ def chunks(seq, n):
 
 
 def remove_file(path: str) -> None:
-    try:
+    with contextlib.suppress(OSError):
         os.remove(path)
-    except OSError:
-        pass
 
 
 def header_value(headers, name: str) -> str:
@@ -467,12 +466,14 @@ def filter_paths(rows, known_entries, own_key_name):
 # ------------------------------------------------------------- index merge
 
 def load_existing_index(data) -> dict:
-    """Parse the downloaded cache-index blob; corrupt -> Fatal."""
+    """Parse the downloaded cache-index blob; corrupt -> Fatal.  `entries` is
+    validated here once, so the rest of the module can trust its shape."""
     try:
         index = json.loads(data)
     except ValueError:
         index = None
-    if not isinstance(index, dict):
+    if not isinstance(index, dict) \
+            or not isinstance(index.get("entries") or {}, dict):
         raise Fatal("failed to parse existing cache index")
     return index
 
@@ -496,25 +497,17 @@ def merge_index(existing: dict, new_entries: dict, pubkey: str,
 
 
 def index_public_key(index: dict) -> str:
-    """public_key from the existing index, rendered as text; '' when
-    absent."""
-    v = index.get("public_key", "")
-    if v is None:
-        return ""
-    return v if isinstance(v, str) else str(v)
+    """public_key from the existing index as text; '' when absent."""
+    return str(index.get("public_key") or "")
 
 
 def layer_digest(manifest_body) -> str:
+    """Digest of the manifest's first layer; '' when absent or unparseable."""
     try:
-        manifest = json.loads(manifest_body)
-        if not isinstance(manifest, dict):
-            return ""
-        layers = manifest.get("layers") or []
-        if layers and isinstance(layers[0], dict):
-            return layers[0].get("digest", "") or ""
-    except (ValueError, AttributeError, TypeError):
-        pass
-    return ""
+        layers = json.loads(manifest_body).get("layers") or []
+        return layers[0].get("digest") or ""
+    except (ValueError, AttributeError, TypeError, IndexError):
+        return ""
 
 
 # --------------------------------------------------------------------- flow
@@ -599,7 +592,7 @@ def filter_candidates(cands, index: dict, own_key_name: str) -> tuple:
     """Batch `nix path-info`, filter against the index, and return
     (keep, info_by_path): the keep list plus the path-info dict per kept
     path, reused by the export step so no second `nix path-info` pass runs.
-    Fatal on a corrupt index or paths left unsigned."""
+    Fatal on paths left unsigned."""
     rows = []
     info_by_path = {}
     for batch in chunks(cands, STD_BATCH):
@@ -613,10 +606,8 @@ def filter_candidates(cands, index: dict, own_key_name: str) -> tuple:
         for path, info in items:
             rows.append((path, list(info.get("signatures", []) or [])))
             info_by_path[path] = info
-    entries = index.get("entries") or {}
-    if not isinstance(entries, dict):
-        raise Fatal("failed to parse existing cache index")
-    keep, missing = filter_paths(rows, set(entries.keys()), own_key_name)
+    keep, missing = filter_paths(rows, set(index.get("entries") or {}),
+                                 own_key_name)
     if missing:
         raise Fatal(f"signing failed for: {', '.join(missing)}; one or more "
                     "paths carry no signature from this cache after signing")
