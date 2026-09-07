@@ -1,36 +1,29 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-warn() {
-  echo "::warning::$1"
-}
+warn() { echo "::warning::$1"; }
 
 # GHCR requires lowercase
 NIXCACHE_REPO="$(printf '%s' "$NIXCACHE_REPO" | tr '[:upper:]' '[:lower:]')"
 
-{
-  echo "NIXCACHE_REPO=$NIXCACHE_REPO"
-  echo "NIXCACHE_PORT=$NIXCACHE_PORT"
-} >>"$GITHUB_ENV"
+cat <<EOF >>"$GITHUB_ENV"
+NIXCACHE_REPO=$NIXCACHE_REPO
+NIXCACHE_PORT=$NIXCACHE_PORT
+EOF
 
 INDEX_DIR="$RUNNER_TEMP/nixcache-proxy"
 mkdir -p "$INDEX_DIR"
-chmod 700 "$INDEX_DIR"
 
-# NIXCACHE_UPSTREAM="" => No upstream fallback (Nix queries cache.nixos.org itself in parallel)
+# NIXCACHE_UPSTREAM="" => no upstream fallback (Nix queries cache.nixos.org itself in parallel)
 NIXCACHE_INDEX_DIR="$INDEX_DIR" NIXCACHE_UPSTREAM="" \
   python3 "$GITHUB_ACTION_PATH/nixcache-proxy.py" >"$INDEX_DIR/proxy.log" 2>&1 &
 PROXY_PID=$!
 
-if ! kill -0 "$PROXY_PID" 2>/dev/null; then
-  warn "Proxy failed to start, skipping substituter configuration"
-  exit 0
-fi
-
 # _status blocks until the index prefetch completes
-if ! curl -fs --max-time 60 --retry 15 --retry-delay 1 --retry-connrefused \
-  -o /dev/null "http://127.0.0.1:$NIXCACHE_PORT/_status"; then
-  warn "Proxy status check failed, skipping substituter configuration"
+if ! kill -0 "$PROXY_PID" 2>/dev/null ||
+  ! curl -fs --max-time 60 --retry 15 --retry-delay 1 --retry-connrefused \
+    -o /dev/null "http://127.0.0.1:$NIXCACHE_PORT/_status"; then
+  warn "Proxy failed to start, skipping substituter configuration"
   exit 0
 fi
 
@@ -46,8 +39,8 @@ fi
 
 if [ -e /nix/var/nix/daemon-socket ]; then
   echo "Multi-user Nix installed, appending config to /etc/nix/nix.conf"
-  echo "$BLOCK" | sudo tee -a /etc/nix/nix.conf
-  echo "Restart nix-daemon"
+  echo "$BLOCK" | sudo tee -a /etc/nix/nix.conf >/dev/null
+  echo "Restarting nix-daemon"
   case "$RUNNER_OS" in
   Linux) sudo systemctl restart nix-daemon ;;
   macOS)
@@ -62,9 +55,9 @@ if [ -e /nix/var/nix/daemon-socket ]; then
     sleep 1
   done
 else
-  echo "Single-user Nix installed, try appending config to /etc/nix/nix.conf first"
+  echo "Single-user Nix installed, trying /etc/nix/nix.conf first"
   echo "$BLOCK" >>/etc/nix/nix.conf || {
-    echo "Append config to ~/.config/nix/nix.conf instead"
+    echo "Appending config to ~/.config/nix/nix.conf instead"
     mkdir -p ~/.config/nix
     echo "$BLOCK" >>~/.config/nix/nix.conf
   }
