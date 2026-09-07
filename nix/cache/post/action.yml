@@ -14,4 +14,5 @@ runs:
       env:
         NIXCACHE_SIGNING_KEY: ${{ inputs.signing_key }}
         NIXCACHE_PATHS: ${{ inputs.paths }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: exec python3 ${{ github.action_path }}/push.py

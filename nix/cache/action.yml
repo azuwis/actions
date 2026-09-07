@@ -18,4 +18,5 @@ runs:
         NIXCACHE_REPO: ${{ inputs.repo }}
         NIXCACHE_PORT: ${{ inputs.port }}
         NIXCACHE_PUBLIC_KEY: ${{ inputs.public_key }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: exec ${{ github.action_path }}/cache.sh
