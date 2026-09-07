@@ -23,7 +23,6 @@ import json
 import lzma
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -618,59 +617,54 @@ def export_upload(paths, info_by_path: dict, token: str, repo: str,
                   cache_dir: str, generated: str) -> tuple:
     """Export + narinfo + blob upload loop.  Returns
     (uploaded, skipped, new_entries) where new_entries is {hash: entry}
-    ready for the index merge."""
-    os.makedirs(os.path.join(cache_dir, "nar"), exist_ok=True)
+    ready for the index merge.  A path that must not be uploaded raises
+    SkipPath, which is warned about and counted as skipped."""
+    nar_dir = os.path.join(cache_dir, "nar")
+    os.makedirs(nar_dir, exist_ok=True)
     new_entries = {}
     uploaded = 0
     skipped = 0
     for path in paths:
-        hash_prefix = os.path.basename(path)[:32]
         info = info_by_path.get(path)
         if info is None:
             warn(f"nix path-info missing for {path}; skipping")
             skipped += 1
             continue
-        nar_file = os.path.join(cache_dir, "nar",
-                                hash_prefix + ".nar." + COMPRESSION_EXT)
-        remove_file(nar_file)
+        hash_prefix = os.path.basename(path)[:32]
+        nar_file = os.path.join(nar_dir, f"{hash_prefix}.nar.{COMPRESSION_EXT}")
         print(f"::group::nix/cache export {hash_prefix}", file=sys.stderr)
-        if not dump_nar(path, nar_file):
-            warn(f"failed to dump {path}; skipping")
-            skipped += 1
-            print("::endgroup::", file=sys.stderr)
-            continue
-        size = os.path.getsize(nar_file)
-        if size > MAX_NAR_SIZE:
-            warn(f"{path} nar missing or exceeds ~10GiB GHCR blob limit; "
-                 "skipping")
-            remove_file(nar_file)
-            skipped += 1
-            print("::endgroup::", file=sys.stderr)
-            continue
-        nar_digest = blob_digest(nar_file)
         try:
-            narinfo = make_narinfo(path, hash_prefix, size,
-                                   nix_hash_convert(nar_digest), info)
-        except Fatal:
-            raise
-        except Exception as e:
-            warn(f"narinfo generation failed for {path}: {e}; skipping")
-            remove_file(nar_file)
+            if not dump_nar(path, nar_file):
+                raise SkipPath(f"failed to dump {path}")
+            size = os.path.getsize(nar_file)
+            if size > MAX_NAR_SIZE:
+                raise SkipPath(f"{path} nar missing or exceeds ~10GiB GHCR "
+                               "blob limit")
+            nar_digest = blob_digest(nar_file)
+            try:
+                narinfo = make_narinfo(path, hash_prefix, size,
+                                       nix_hash_convert(nar_digest), info)
+            except Fatal:
+                raise
+            except Exception as e:
+                raise SkipPath(
+                    f"narinfo generation failed for {path}: {e}") from None
+            push_blob(nar_file, nar_digest, token, repo)
+            new_entries[hash_prefix] = {
+                "name": os.path.basename(path).split("-", 1)[-1],
+                "narinfo": narinfo,
+                "nar_digest": nar_digest,
+                "nar_size": size,
+                "added": generated,
+            }
+            uploaded += 1
+            print(f"uploaded {hash_prefix} ({size} bytes)", file=sys.stderr)
+        except SkipPath as e:
+            warn(f"{e}; skipping")
             skipped += 1
+        finally:
+            remove_file(nar_file)
             print("::endgroup::", file=sys.stderr)
-            continue
-        push_blob(nar_file, nar_digest, token, repo)
-        new_entries[hash_prefix] = {
-            "name": os.path.basename(path).split("-", 1)[-1],
-            "narinfo": narinfo,
-            "nar_digest": nar_digest,
-            "nar_size": size,
-            "added": generated,
-        }
-        uploaded += 1
-        remove_file(nar_file)
-        print("::endgroup::", file=sys.stderr)
-        print(f"uploaded {hash_prefix} ({size} bytes)", file=sys.stderr)
     return uploaded, skipped, new_entries
 
 
@@ -792,20 +786,11 @@ def main(env=None) -> None:
     if not config.runner_temp:
         warn("RUNNER_TEMP unset; using /tmp")
     try:
-        try:
-            avail_kb = shutil.disk_usage(work_dir).free // 1024
-            if 0 < avail_kb < 5242880:
-                warn(f"less than 5GiB free in {work_dir}; large NARs may fail")
-        except OSError:
-            pass
         run(config, work_dir, cache_dir)
     except SkipRound as e:
         warn(str(e))
         sys.exit(0)
-    except Fatal as e:
-        print(f"::error::{e}", file=sys.stderr)
-        sys.exit(1)
-    except NixError as e:
+    except (Fatal, NixError) as e:
         print(f"::error::{e}", file=sys.stderr)
         sys.exit(1)
 

@@ -125,6 +125,65 @@ class MakeNarinfoTest(unittest.TestCase):
                          f"empty FileHash/NarHash for {STORE}")
 
 
+def _fake_dump(content=b"nar"):
+    """dump_nar stand-in that really creates the NAR file and succeeds."""
+    def dump(path, nar_file):
+        Path(nar_file).write_bytes(content)
+        return True
+    return dump
+
+
+class ExportUploadTest(unittest.TestCase):
+    """export_upload: a SkipPath from any stage costs exactly one skip, still
+    closes the log group and removes the NAR; other paths still upload."""
+
+    def test_dump_failure_skips_and_the_rest_upload(self):
+        good = "/nix/store/" + "a" * 32 + "-good"
+        bad = "/nix/store/" + "b" * 32 + "-bad"
+        infos = {p: {"narHash": SRI_ZERO, "narSize": 1000}
+                 for p in (good, bad)}
+
+        def fake_dump(path, nar_file):
+            if path != good:
+                return False
+            Path(nar_file).write_bytes(b"nar")
+            return True
+
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(push, "dump_nar", side_effect=fake_dump), \
+                mock.patch.object(push, "nix_hash_convert",
+                                  return_value="f" * 52), \
+                mock.patch.object(push, "push_blob") as push_blob:
+            uploaded, skipped, entries = push.export_upload(
+                [good, bad], infos, "tok", "o/r", d, "t")
+            self.assertEqual(list(Path(d, "nar").iterdir()), [])  # cleaned up
+        self.assertEqual((uploaded, skipped), (1, 1))
+        self.assertEqual(list(entries), ["a" * 32])
+        self.assertEqual(entries["a" * 32]["name"], "good")
+        self.assertEqual(entries["a" * 32]["nar_size"], 3)   # file, not narSize
+        self.assertIn("NarSize: 1000", entries["a" * 32]["narinfo"])
+        push_blob.assert_called_once()
+
+    def test_oversized_nar_skips_before_uploading(self):
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(push, "dump_nar", _fake_dump()), \
+                mock.patch.object(push, "MAX_NAR_SIZE", 0), \
+                mock.patch.object(push, "push_blob") as push_blob:
+            result = push.export_upload(
+                [STORE], {STORE: {"narHash": SRI_ZERO, "narSize": 1000}},
+                "tok", "o/r", d, "t")
+            self.assertEqual(list(Path(d, "nar").iterdir()), [])
+        self.assertEqual(result, (0, 1, {}))
+        push_blob.assert_not_called()
+
+    def test_missing_path_info_skips_without_dumping(self):
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(push, "dump_nar") as dump_nar:
+            result = push.export_upload([STORE], {}, "tok", "o/r", d, "t")
+        self.assertEqual(result, (0, 1, {}))
+        dump_nar.assert_not_called()
+
+
 class PathInfoItemsTest(unittest.TestCase):
     """`nix path-info --json --json-format 1` is always a map keyed by store
     path; anything else is a ValueError."""
