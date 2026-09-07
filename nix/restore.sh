@@ -101,7 +101,7 @@ post() {
     esac
 
     probe_path=$(readlink -f "$(command -v nix)")
-    for _ in $(seq 1 30); do
+    for _ in {1..30}; do
       nix-store --store daemon --query --hash "$probe_path" >/dev/null 2>&1 && break
       echo "Waiting for nix-daemon"
       sleep 1
