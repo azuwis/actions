@@ -50,8 +50,7 @@ MAX_REDIRECTS = 5
 # ------------------------------------------------------------ control flow
 
 class SkipRound(Exception):
-    """Abort the whole round as a warning (exit 0): nothing to upload,
-    insufficient permission, or an unavailable remote index."""
+    """Abort the whole round as a warning (exit 0)."""
 
 
 class Fatal(Exception):
@@ -93,7 +92,6 @@ def chunks(seq, n):
 
 @contextlib.contextmanager
 def log_group(name: str):
-    """Open/close one GitHub Actions log group around `name`'s work."""
     print(f"::group::{name}", file=sys.stderr)
     try:
         yield
@@ -166,7 +164,6 @@ def path_info_items(data):
 
 
 def expand_closure_batch(batch):
-    """One CLOSURE_BATCH batch: (paths, batch_failed)."""
     try:
         data = nix_json("path-info", "--recursive", "--json",
                         "--json-format", "1", "--", *batch)
@@ -226,8 +223,8 @@ def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
 
 
 def _send_request(method, url, headers, body, timeout=30.0):
-    """One transfer: a request plus redirects (relative Locations resolved
-    against the current URL; transport errors propagate to the retry loop)."""
+    """One transfer: a request plus redirects; transport errors propagate
+    to the retry loop."""
     current_url = url
     current_headers = dict(headers)
     hops = 0
