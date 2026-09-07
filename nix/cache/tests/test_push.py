@@ -125,24 +125,26 @@ class MakeNarinfoTest(unittest.TestCase):
 
 
 class PathInfoItemsTest(unittest.TestCase):
-    """path_info_items tolerates both map and array forms of
-    `nix path-info --json`."""
+    """`nix path-info --json --json-format 1` is always a map keyed by store
+    path; anything else is a ValueError."""
 
     def test_map_form(self):
         items = list(push.path_info_items({STORE: {"narSize": 1}}))
         self.assertEqual(items, [(STORE, {"narSize": 1})])
 
-    def test_array_form(self):
-        items = list(push.path_info_items([{"path": STORE, "narSize": 1}]))
-        self.assertEqual(items, [(STORE, {"path": STORE, "narSize": 1})])
-
     def test_bad_input_raises(self):
-        with self.assertRaises(ValueError):
-            list(push.path_info_items([{"narSize": 1}]))
-        with self.assertRaises(ValueError):
-            list(push.path_info_items({STORE: "not a dict"}))
-        with self.assertRaises(ValueError):
-            list(push.path_info_items("nope"))
+        for bad in ([{"path": STORE, "narSize": 1}], {STORE: "not a dict"},
+                    "nope"):
+            with self.assertRaises(ValueError):
+                list(push.path_info_items(bad))
+
+    def test_store_scan_reuses_the_same_validation(self):
+        with mock.patch.object(push, "nix_json",
+                               return_value={STORE: {"narSize": 1}}):
+            self.assertEqual(push.store_scan_candidates(), [STORE])
+        with mock.patch.object(push, "nix_json", return_value="nope"):
+            with self.assertRaises(push.Fatal):
+                push.store_scan_candidates()
 
 
 class MergeIndexTest(unittest.TestCase):

@@ -171,19 +171,14 @@ def to_base32(h: str, convert=nix_hash_convert) -> str:
 
 
 def path_info_items(data):
-    """(path, info-dict) pairs from path-info JSON (array or map form)."""
-    if isinstance(data, list):
-        for it in data:
-            if not isinstance(it, dict) or "path" not in it:
-                raise ValueError("unexpected path-info array element")
-            yield it["path"], it
-    elif isinstance(data, dict):
-        for key, val in data.items():
-            if not isinstance(val, dict):
-                raise ValueError("unexpected path-info map value")
-            yield key, val
-    else:
+    """(path, info-dict) pairs from `nix path-info --json --json-format 1`,
+    which is always a map keyed by store path."""
+    if not isinstance(data, dict):
         raise ValueError("unexpected path-info JSON")
+    for path, info in data.items():
+        if not isinstance(info, dict):
+            raise ValueError("unexpected path-info map value")
+        yield path, info
 
 
 def expand_closure_batch(batch):
@@ -207,10 +202,11 @@ def sign_paths(key_file: str, paths) -> None:
 
 
 def store_scan_candidates():
-    data = nix_json("path-info", "--all", "--json", "--json-format", "1")
-    if isinstance(data, dict):
-        return list(data.keys())
-    raise Fatal("unexpected `nix path-info --all` output")
+    try:
+        return [path for path, _ in path_info_items(
+            nix_json("path-info", "--all", "--json", "--json-format", "1"))]
+    except ValueError as e:
+        raise Fatal(f"unexpected `nix path-info --all` output ({e})") from None
 
 
 # --------------------------------------------------------------------- HTTP
