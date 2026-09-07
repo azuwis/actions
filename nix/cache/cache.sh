@@ -32,16 +32,15 @@ if kill -0 "$PROXY_PID" 2>/dev/null; then
     exit 0
   fi
 else
-  warn "proxy failed to start; skipping substituter configuration"
+  warn "proxy failed to start, skipping substituter configuration"
   exit 0
 fi
 
-BLOCK="extra-substituters = http://127.0.0.1:$NIXCACHE_PORT
-extra-trusted-substituters = http://127.0.0.1:$NIXCACHE_PORT"
+BLOCK="extra-substituters = http://127.0.0.1:$NIXCACHE_PORT"
 if [ -n "$NIXCACHE_PUBLIC_KEY" ]; then
   IDX_KEY="$(curl -fs --max-time 10 "http://127.0.0.1:$NIXCACHE_PORT/public-key" 2>/dev/null | tr -d '\n' || true)"
   if [ -n "$IDX_KEY" ] && [ "$IDX_KEY" != "$NIXCACHE_PUBLIC_KEY" ]; then
-    echo "::warning::index advertises a different public key than the public_key input; trusting the local input"
+    warn "index advertises a different public key than the public_key input; trusting the local input"
   fi
   BLOCK="$BLOCK
 extra-trusted-public-keys = $NIXCACHE_PUBLIC_KEY"
@@ -51,7 +50,6 @@ else
 require-sigs = false"
 fi
 
-# portable marker replace: GNU/BSD sed -i.bak, then drop the backup
 apply_config() { # $1 = file, $2 = use sudo (1/0)
   local file="$1"
   local -a sudo_cmd=()
@@ -60,10 +58,8 @@ apply_config() { # $1 = file, $2 = use sudo (1/0)
   else
     mkdir -p "$(dirname "$file")"
   fi
-  "${sudo_cmd[@]}" sed -i.bak '/^# nix-cache begin$/,/^# nix-cache end$/d' "$file" 2>/dev/null || true
-  "${sudo_cmd[@]}" rm -f "$file.bak" 2>/dev/null || true
-  if ! printf '\n# nix-cache begin\n%s\n# nix-cache end\n' "$BLOCK" | "${sudo_cmd[@]}" tee -a "$file" >/dev/null; then
-    warn "failed to write $file (nix.conf marker block)"
+  if ! printf '\n%s\n' "$BLOCK" | "${sudo_cmd[@]}" tee -a "$file" >/dev/null; then
+    warn "failed to write $file (nix.conf block)"
   fi
 }
 
