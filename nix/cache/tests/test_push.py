@@ -140,7 +140,12 @@ class ExportUploadTest(unittest.TestCase):
     def test_dump_failure_skips_and_the_rest_upload(self):
         good = "/nix/store/" + "a" * 32 + "-good"
         bad = "/nix/store/" + "b" * 32 + "-bad"
-        infos = {p: {"narHash": SRI_ZERO, "narSize": 1000}
+        # narHash must be a form to_base32 passes through untouched:
+        # make_narinfo binds convert=nix_hash_convert as a DEFAULT ARGUMENT, so
+        # patching the module global does not intercept it, and an SRI hash
+        # would shell out to a `nix` that is not on PATH in the CI unit-tests
+        # step (it runs before ./nix installs anything).
+        infos = {p: {"narHash": NIX32_ZERO, "narSize": 1000}
                  for p in (good, bad)}
 
         def fake_dump(path, nar_file):
@@ -162,6 +167,8 @@ class ExportUploadTest(unittest.TestCase):
         self.assertEqual(entries["a" * 32]["name"], "good")
         self.assertEqual(entries["a" * 32]["nar_size"], 3)   # file, not narSize
         self.assertIn("NarSize: 1000", entries["a" * 32]["narinfo"])
+        self.assertIn("NarHash: sha256:" + NIX32_ZERO,
+                      entries["a" * 32]["narinfo"])
         push_blob.assert_called_once()
 
     def test_oversized_nar_skips_before_uploading(self):
@@ -170,7 +177,7 @@ class ExportUploadTest(unittest.TestCase):
                 mock.patch.object(push, "MAX_NAR_SIZE", 0), \
                 mock.patch.object(push, "push_blob") as push_blob:
             result = push.export_upload(
-                [STORE], {STORE: {"narHash": SRI_ZERO, "narSize": 1000}},
+                [STORE], {STORE: {"narHash": NIX32_ZERO, "narSize": 1000}},
                 "tok", "o/r", d, "t")
             self.assertEqual(list(Path(d, "nar").iterdir()), [])
         self.assertEqual(result, (0, 1, {}))
