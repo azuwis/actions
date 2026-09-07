@@ -10,6 +10,7 @@ import io
 import lzma
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -135,7 +136,11 @@ def _fake_dump(content=b"nar"):
 
 class ExportUploadTest(unittest.TestCase):
     """export_upload: a SkipPath from any stage costs exactly one skip, still
-    closes the log group and removes the NAR; other paths still upload."""
+    closes the log group and removes the NAR; other paths still upload.
+
+    warn and stderr are captured, so the tests assert the emitted warning text
+    and the exact ::group::/::endgroup:: sequence instead of printing them into
+    the CI log as annotations and log groups."""
 
     def test_dump_failure_skips_and_the_rest_upload(self):
         good = "/nix/store/" + "a" * 32 + "-good"
@@ -154,10 +159,13 @@ class ExportUploadTest(unittest.TestCase):
             Path(nar_file).write_bytes(b"nar")
             return True
 
+        err = io.StringIO()
         with tempfile.TemporaryDirectory() as d, \
                 mock.patch.object(push, "dump_nar", side_effect=fake_dump), \
                 mock.patch.object(push, "nix_hash_convert",
                                   return_value="f" * 52), \
+                mock.patch.object(push, "warn") as warn, \
+                mock.patch.object(sys, "stderr", err), \
                 mock.patch.object(push, "push_blob") as push_blob:
             uploaded, skipped, entries = push.export_upload(
                 [good, bad], infos, "tok", "o/r", d, "t")
@@ -170,25 +178,52 @@ class ExportUploadTest(unittest.TestCase):
         self.assertIn("NarHash: sha256:" + NIX32_ZERO,
                       entries["a" * 32]["narinfo"])
         push_blob.assert_called_once()
+        self.assertEqual(warn.call_args_list,
+                         [mock.call(f"failed to dump {bad}; skipping")])
+        # one group per path, opened before the work and closed after; the
+        # uploaded line belongs to the path's own group
+        self.assertEqual(err.getvalue().splitlines(), [
+            f"::group::nix/cache export {'a' * 32}",
+            f"uploaded {'a' * 32} (3 bytes)",
+            "::endgroup::",
+            f"::group::nix/cache export {'b' * 32}",
+            "::endgroup::",
+        ])
 
     def test_oversized_nar_skips_before_uploading(self):
+        err = io.StringIO()
         with tempfile.TemporaryDirectory() as d, \
                 mock.patch.object(push, "dump_nar", _fake_dump()), \
                 mock.patch.object(push, "MAX_NAR_SIZE", 0), \
+                mock.patch.object(push, "warn") as warn, \
+                mock.patch.object(sys, "stderr", err), \
                 mock.patch.object(push, "push_blob") as push_blob:
             result = push.export_upload(
                 [STORE], {STORE: {"narHash": NIX32_ZERO, "narSize": 1000}},
                 "tok", "o/r", d, "t")
             self.assertEqual(list(Path(d, "nar").iterdir()), [])
         self.assertEqual(result, (0, 1, {}))
+        self.assertEqual(warn.call_args_list,
+                         [mock.call(f"{STORE} nar missing or exceeds ~10GiB "
+                                    "GHCR blob limit; skipping")])
         push_blob.assert_not_called()
+        self.assertEqual(err.getvalue().splitlines(),
+                         [f"::group::nix/cache export {H32}", "::endgroup::"])
 
     def test_missing_path_info_skips_without_dumping(self):
+        err = io.StringIO()
         with tempfile.TemporaryDirectory() as d, \
-                mock.patch.object(push, "dump_nar") as dump_nar:
+                mock.patch.object(push, "dump_nar") as dump_nar, \
+                mock.patch.object(push, "warn") as warn, \
+                mock.patch.object(sys, "stderr", err):
             result = push.export_upload([STORE], {}, "tok", "o/r", d, "t")
         self.assertEqual(result, (0, 1, {}))
+        self.assertEqual(warn.call_args_list,
+                         [mock.call(f"nix path-info missing for {STORE}; "
+                                    "skipping")])
         dump_nar.assert_not_called()
+        # that skip is decided before any group is opened
+        self.assertEqual(err.getvalue(), "")
 
 
 class PathInfoItemsTest(unittest.TestCase):
