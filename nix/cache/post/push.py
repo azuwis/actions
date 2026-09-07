@@ -12,8 +12,9 @@ signing failure, HTTP failures); `SkipPath` skips one store path; `NixError`
 wraps a failed `nix` command and call sites decide skip vs `Fatal`.
 
 Environment: NIXCACHE_REPO (from nix/cache via GITHUB_ENV),
-NIXCACHE_SIGNING_KEY / NIXCACHE_PATHS (action inputs), GITHUB_TOKEN
-(runner-provided), RUNNER_TEMP.
+NIXCACHE_SIGNING_KEY / NIXCACHE_PATHS (action inputs), GITHUB_TOKEN (passed by
+the action from the github.token context -- it is NOT a default environment
+variable, so it is empty unless declared), RUNNER_TEMP.
 """
 import base64
 import contextlib
@@ -292,6 +293,9 @@ def build_put_url(location: str, digest: str) -> str:
 
 
 def oci_get_token(repo: str, token: str) -> str:
+    if not token:
+        raise Fatal("GITHUB_TOKEN is unset; a composite action must pass it "
+                    "explicitly as GITHUB_TOKEN: ${{ github.token }}")
     auth = "Basic " + base64.b64encode(f"token:{token}".encode()).decode()
     st, _, body = http_request(
         "GET", token_url(repo),

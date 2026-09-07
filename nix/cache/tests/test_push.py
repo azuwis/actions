@@ -307,6 +307,38 @@ class FailOrSkipTest(unittest.TestCase):
             "OCI manifest push failed (cache-index) (HTTP 500)")
 
 
+class OciGetTokenTest(unittest.TestCase):
+    """GITHUB_TOKEN is not a default environment variable, so an empty token is
+    a real failure mode: it must be named instead of surfacing as an ambiguous
+    403, and the status code must be reported."""
+
+    def test_empty_token_fails_before_any_request(self):
+        with mock.patch.object(push, "http_request") as http_request:
+            with self.assertRaises(push.Fatal) as cm:
+                push.oci_get_token("o/r", "")
+        self.assertIn("GITHUB_TOKEN is unset", str(cm.exception))
+        http_request.assert_not_called()
+
+    def test_status_code_is_reported(self):
+        with mock.patch.object(push, "http_request",
+                               return_value=(403, [], b'{"errors":[]}')):
+            with self.assertRaises(push.Fatal) as cm:
+                push.oci_get_token("o/r", "ghs_fake")
+        self.assertIn("HTTP 403", str(cm.exception))
+
+    def test_200_without_token_field_reads_as_http_200(self):
+        with mock.patch.object(push, "http_request",
+                               return_value=(200, [], b'{"token": ""}')):
+            with self.assertRaises(push.Fatal) as cm:
+                push.oci_get_token("o/r", "ghs_fake")
+        self.assertIn("HTTP 200", str(cm.exception))
+
+    def test_success_returns_the_registry_token(self):
+        with mock.patch.object(push, "http_request",
+                               return_value=(200, [], b'{"token": "oci-abc"}')):
+            self.assertEqual(push.oci_get_token("o/r", "ghs_fake"), "oci-abc")
+
+
 class UrlTest(unittest.TestCase):
     def test_token_url_scope_and_service(self):
         self.assertEqual(
