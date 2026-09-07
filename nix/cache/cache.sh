@@ -17,22 +17,20 @@ INDEX_DIR="$RUNNER_TEMP/nixcache-proxy"
 mkdir -p "$INDEX_DIR"
 chmod 700 "$INDEX_DIR"
 
-# NIXCACHE_UPSTREAM="" => no upstream fallback (Nix queries cache.nixos.org itself in parallel)
+# NIXCACHE_UPSTREAM="" => No upstream fallback (Nix queries cache.nixos.org itself in parallel)
 NIXCACHE_INDEX_DIR="$INDEX_DIR" NIXCACHE_UPSTREAM="" \
   python3 "$GITHUB_ACTION_PATH/nixcache-proxy.py" >"$INDEX_DIR/proxy.log" 2>&1 &
 PROXY_PID=$!
 
 if kill -0 "$PROXY_PID" 2>/dev/null; then
-  # _status: ready + identity, blocks on the index prefetch lock at cold start
-  STATUS_REPO="$(curl -fs --max-time 60 --retry 15 --retry-delay 1 --retry-connrefused \
-    "http://127.0.0.1:$NIXCACHE_PORT/_status" 2>/dev/null | jq -r '.repo // empty' 2>/dev/null || true)"
-  if [ "$STATUS_REPO" != "$NIXCACHE_REPO" ]; then
-    kill "$PROXY_PID" 2>/dev/null || true
-    warn "proxy not serving repo=$NIXCACHE_REPO (got: '${STATUS_REPO:-empty}'); skipping substituter configuration"
+  # _status blocks until the index prefetch completes
+  if ! curl -fs --max-time 60 --retry 15 --retry-delay 1 --retry-connrefused \
+    -o /dev/null "http://127.0.0.1:$NIXCACHE_PORT/_status"; then
+    warn "Proxy status check failed, skipping substituter configuration"
     exit 0
   fi
 else
-  warn "proxy failed to start, skipping substituter configuration"
+  warn "Proxy failed to start, skipping substituter configuration"
   exit 0
 fi
 
