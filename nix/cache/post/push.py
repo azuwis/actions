@@ -305,8 +305,8 @@ def oci_get_token(repo: str, token: str) -> str:
             oci_token = ""
         if oci_token:
             return oci_token
-    raise Fatal(f"failed to obtain GHCR registry token "
-                f"(scope: repository:{repo}/nix-cache:pull,push)")
+    raise Fatal(f"failed to obtain GHCR registry token (HTTP {st}, "
+                f"scope: repository:{repo}/nix-cache:pull,push)")
 
 
 def fetch_manifest(tag: str, token: str, repo: str) -> tuple:
