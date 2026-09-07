@@ -39,45 +39,38 @@ if [ -n "$NIXCACHE_PUBLIC_KEY" ]; then
   BLOCK="$BLOCK
 extra-trusted-public-keys = $NIXCACHE_PUBLIC_KEY"
 else
-  warn "no public_key input: adding require-sigs = false (disables signature verification for ALL substituters)"
+  warn "No public_key input, adding require-sigs = false (disables signature verification for ALL substituters)"
   BLOCK="$BLOCK
 require-sigs = false"
 fi
 
-apply_config() { # $1 = file, $2 = use sudo (1/0)
-  local file="$1"
-  local -a sudo_cmd=()
-  if [ "$2" = 1 ]; then
-    sudo_cmd=(sudo)
-  else
-    mkdir -p "$(dirname "$file")"
-  fi
-  if ! printf '\n%s\n' "$BLOCK" | "${sudo_cmd[@]}" tee -a "$file" >/dev/null; then
-    warn "failed to write $file (nix.conf block)"
-  fi
-}
-
 if [ -e /nix/var/nix/daemon-socket ]; then
-  sudo mkdir -p /etc/nix
-  [ -e /etc/nix/nix.conf ] || sudo touch /etc/nix/nix.conf
-  apply_config /etc/nix/nix.conf 1
+  echo "Multi-user Nix installed, appending config to /etc/nix/nix.conf"
+  echo "$BLOCK" | sudo tee -a /etc/nix/nix.conf
+  echo "Restart nix-daemon"
   case "$RUNNER_OS" in
+  Linux) sudo systemctl restart nix-daemon ;;
   macOS)
-    sudo launchctl unload /Library/LaunchDaemons/org.nixos.nix-daemon.plist 2>/dev/null || true
-    sudo launchctl load -w /Library/LaunchDaemons/org.nixos.nix-daemon.plist 2>/dev/null || true
-    ;;
-  *)
-    if ! sudo systemctl restart nix-daemon 2>/dev/null; then
-      warn "failed to restart nix-daemon; substituter config may not be effective"
-    fi
+    sudo launchctl unload /Library/LaunchDaemons/org.nixos.nix-daemon.plist
+    sudo launchctl load -w /Library/LaunchDaemons/org.nixos.nix-daemon.plist
     ;;
   esac
+  probe_path=$(readlink -f "$(command -v nix)")
+  for _ in {1..30}; do
+    nix-store --store daemon --query --hash "$probe_path" >/dev/null 2>&1 && break
+    echo "Waiting for nix-daemon"
+    sleep 1
+  done
 else
-  warn "no nix daemon socket found; configuring user-level nix.conf only"
+  echo "Single-user Nix installed, try appending config to /etc/nix/nix.conf first"
+  echo "$BLOCK" >>/etc/nix/nix.conf || {
+    echo "Append config to ~/.config/nix/nix.conf instead"
+    mkdir -p ~/.config/nix
+    echo "$BLOCK" >>~/.config/nix/nix.conf
+  }
 fi
-apply_config "${HOME}/.config/nix/nix.conf" 0
 
 echo "::group::nix/cache"
-echo "OCI substituter configured: http://127.0.0.1:$NIXCACHE_PORT (repo=$NIXCACHE_REPO)"
+echo "nixcache substituter configured: http://127.0.0.1:$NIXCACHE_PORT (repo=$NIXCACHE_REPO)"
 [ -n "$NIXCACHE_PUBLIC_KEY" ] || echo "unsigned mode: require-sigs = false"
 echo "::endgroup::"
