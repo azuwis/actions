@@ -9,6 +9,7 @@ import importlib.util
 import io
 import lzma
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -415,15 +416,24 @@ class RealNixTest(unittest.TestCase):
         self.assertIn("NarHash: sha256:" + NIX32_ZERO, text)
 
 
-@unittest.skipUnless(shutil.which("nix-hash"), "nix-hash not on PATH")
-class RealNixHashTest(unittest.TestCase):
-    def test_flat_hash_is_bare_base32(self):
+@unittest.skipUnless(shutil.which("nix") and shutil.which("nix-hash"),
+                     "nix / nix-hash not on PATH")
+class FileHashEquivalenceTest(unittest.TestCase):
+    """FileHash is derived from the blob digest, so `nix hash convert` on a
+    sha256:<hex> must agree byte-for-byte with `nix-hash --flat` on the file --
+    otherwise every narinfo FileHash silently changes."""
+
+    def test_convert_from_hex_matches_nix_hash_flat(self):
         with tempfile.NamedTemporaryFile() as f:
             f.write(b"hello nix-cache")
             f.flush()
-            h = push.nix_file_hash(f.name)
-        self.assertEqual(len(h), 52)        # sha256 in nix-base32
-        self.assertNotIn("-", h)
+            cli = subprocess.run(
+                ["nix-hash", "--flat", "--type", "sha256", "--base32", f.name],
+                capture_output=True, text=True, check=True).stdout.strip()
+            digest = push.blob_digest(f.name)
+        self.assertEqual(push.nix_hash_convert(digest), cli)
+        self.assertEqual(len(cli), 52)      # sha256 in nix-base32
+        self.assertNotIn("-", cli)
 
 
 class CompressStreamTest(unittest.TestCase):

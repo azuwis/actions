@@ -139,14 +139,6 @@ def nix_json(*args):
             from None
 
 
-def nix_file_hash(path: str) -> str:
-    """FileHash (bare nix-base32) via the legacy `nix-hash` CLI, still shipped
-    with Nix; empty when unhashable (path skipped)."""
-    p = subprocess.run(["nix-hash", "--flat", "--type", "sha256", "--base32",
-                        path], capture_output=True, text=True)
-    return p.stdout.strip() if p.returncode == 0 else ""
-
-
 def nix_key_public(secret: str) -> str:
     """`nix key convert-secret-to-public` reading the secret on stdin."""
     try:
@@ -348,25 +340,22 @@ def put_manifest(tag: str, manifest_body, token: str, repo: str) -> None:
 
 
 def blob_digest(path: str) -> str:
+    """`sha256:<hex>` of a file; the single hash pass, also feeding FileHash."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
-        while True:
-            b = f.read(CHUNK)
-            if not b:
-                break
+        while b := f.read(CHUNK):
             h.update(b)
     return "sha256:" + h.hexdigest()
 
 
-def push_blob(file_path: str, token: str, repo: str) -> str:
-    """Upload one blob (HEAD fast-path -> POST -> PUT) and return its digest."""
-    digest = blob_digest(file_path)
+def push_blob(file_path: str, digest: str, token: str, repo: str) -> None:
+    """Upload one blob (HEAD fast-path -> POST -> PUT)."""
     st, _, _ = http_request(
         "HEAD", blob_url(repo, digest),
         headers={"Authorization": f"Bearer {token}"}, timeout=30.0,
     )
     if st == 200:
-        return digest
+        return
     st, hdrs, _ = http_request(
         "POST", uploads_url(repo),
         headers={"Authorization": f"Bearer {token}"},
@@ -389,7 +378,6 @@ def push_blob(file_path: str, token: str, repo: str) -> str:
         )
     if st not in (201, 202):
         fail_or_skip(st, f"blob upload failed for {digest}")
-    return digest
 
 
 # ------------------------------------------------------------- compression
@@ -694,9 +682,10 @@ def export_upload(paths, info_by_path: dict, token: str, repo: str,
             skipped += 1
             print("::endgroup::", file=sys.stderr)
             continue
-        file_hash = nix_file_hash(nar_file)
+        nar_digest = blob_digest(nar_file)
         try:
-            narinfo = make_narinfo(path, hash_prefix, size, file_hash, info)
+            narinfo = make_narinfo(path, hash_prefix, size,
+                                   nix_hash_convert(nar_digest), info)
         except Fatal:
             raise
         except Exception as e:
@@ -705,7 +694,7 @@ def export_upload(paths, info_by_path: dict, token: str, repo: str,
             skipped += 1
             print("::endgroup::", file=sys.stderr)
             continue
-        nar_digest = push_blob(nar_file, token, repo)
+        push_blob(nar_file, nar_digest, token, repo)
         new_entries[hash_prefix] = {
             "name": os.path.basename(path).split("-", 1)[-1],
             "narinfo": narinfo,
@@ -735,11 +724,13 @@ def rebuild_index(work_dir: str, existing: dict, new_entries: dict,
 def push_index(index_json: str, token: str, repo: str,
                work_dir: str) -> str:
     """Push index blob + config blob + manifest.  Returns index digest."""
-    index_digest = push_blob(index_json, token, repo)
+    index_digest = blob_digest(index_json)
+    push_blob(index_json, index_digest, token, repo)
     config_file = os.path.join(work_dir, "config.json")
     with open(config_file, "w") as f:
         f.write("{}\n")
-    config_digest = push_blob(config_file, token, repo)
+    config_digest = blob_digest(config_file)
+    push_blob(config_file, config_digest, token, repo)
     config_size = os.path.getsize(config_file)
     index_size = os.path.getsize(index_json)
     manifest = {
