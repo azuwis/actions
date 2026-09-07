@@ -61,12 +61,6 @@ if [ -e /nix/var/nix/daemon-socket ]; then
   sudo mkdir -p /etc/nix
   [ -e /etc/nix/nix.conf ] || sudo touch /etc/nix/nix.conf
   apply_config /etc/nix/nix.conf 1
-else
-  warn "no nix daemon socket found; configuring user-level nix.conf only"
-fi
-apply_config "${HOME}/.config/nix/nix.conf" 0
-
-if [ -e /nix/var/nix/daemon-socket ]; then
   case "$RUNNER_OS" in
   macOS)
     sudo launchctl unload /Library/LaunchDaemons/org.nixos.nix-daemon.plist 2>/dev/null || true
@@ -78,7 +72,10 @@ if [ -e /nix/var/nix/daemon-socket ]; then
     fi
     ;;
   esac
+else
+  warn "no nix daemon socket found; configuring user-level nix.conf only"
 fi
+apply_config "${HOME}/.config/nix/nix.conf" 0
 
 echo "::group::nix/cache"
 echo "OCI substituter configured: http://127.0.0.1:$NIXCACHE_PORT (repo=$NIXCACHE_REPO)"
