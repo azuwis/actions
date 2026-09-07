@@ -64,14 +64,6 @@ class NixError(Exception):
     """`nix` command failed or returned unparseable JSON."""
 
 
-def warn(msg: str) -> None:
-    print(f"::warning::{msg}", file=sys.stderr)
-
-
-def notice(msg: str) -> None:
-    print(f"::notice::{msg}", file=sys.stderr)
-
-
 def fail_or_skip(code: int, msg: str) -> None:
     """401/403 -> SkipRound; anything else -> Fatal."""
     if code in (401, 403):
@@ -82,6 +74,14 @@ def fail_or_skip(code: int, msg: str) -> None:
 
 
 # ------------------------------------------------------------ small helpers
+
+def warn(msg: str) -> None:
+    print(f"::warning::{msg}", file=sys.stderr)
+
+
+def notice(msg: str) -> None:
+    print(f"::notice::{msg}", file=sys.stderr)
+
 
 def chunks(seq, n):
     for i in range(0, len(seq), n):
@@ -325,6 +325,14 @@ def put_manifest(tag: str, manifest_body, token: str, repo: str) -> None:
         fail_or_skip(st, f"OCI manifest push failed ({tag})")
 
 
+def layer_digest(manifest_body) -> str:
+    try:
+        layers = json.loads(manifest_body).get("layers") or []
+        return layers[0].get("digest") or ""
+    except (ValueError, AttributeError, TypeError, IndexError):
+        return ""
+
+
 def blob_digest(path: str) -> str:
     """`sha256:<hex>` of a file; the single hash pass, also feeding FileHash."""
     h = hashlib.sha256()
@@ -366,7 +374,7 @@ def push_blob(file_path: str, digest: str, token: str, repo: str) -> None:
         fail_or_skip(st, f"blob upload failed for {digest}")
 
 
-# ------------------------------------------------------------- compression
+# ------------------------------------------------------------------ export
 
 def _compress_stream(src, dst) -> None:
     """Stream `src` into `dst`."""
@@ -478,14 +486,6 @@ def merge_index(existing: dict, new_entries: dict, pubkey: str,
 
 def index_public_key(index: dict) -> str:
     return str(index.get("public_key") or "")
-
-
-def layer_digest(manifest_body) -> str:
-    try:
-        layers = json.loads(manifest_body).get("layers") or []
-        return layers[0].get("digest") or ""
-    except (ValueError, AttributeError, TypeError, IndexError):
-        return ""
 
 
 # --------------------------------------------------------------------- flow
