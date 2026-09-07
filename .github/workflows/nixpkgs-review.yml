@@ -77,7 +77,7 @@ jobs:
         if: ${{ inputs.debug }}
       - name: Run nixpkgs-review pr ${{ inputs.pr }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           PULL_REQUEST: ${{ inputs.pr }}
         run: |
           git config --global user.name 'github-actions[bot]'
