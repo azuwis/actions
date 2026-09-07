@@ -442,10 +442,9 @@ class CompressStreamTest(unittest.TestCase):
     def _data(self):
         return b"hello world\n" * 100000
 
-    def test_compress_stream_active_path_round_trip(self):
-        from io import BytesIO
-        out = BytesIO()
-        push._compress_stream(BytesIO(self._data()), out)
+    def test_active_path_round_trip(self):
+        out = io.BytesIO()
+        push._compress_stream(io.BytesIO(self._data()), out)
         if push.COMPRESSION == "zstd":
             import compression.zstd as z
             dec = z.ZstdDecompressor().decompress(out.getvalue())
@@ -453,30 +452,19 @@ class CompressStreamTest(unittest.TestCase):
             dec = lzma.decompress(out.getvalue())
         self.assertEqual(dec, self._data())
 
-    def test_compress_stream_magic(self):
-        from io import BytesIO
-        out = BytesIO()
-        push._compress_stream(BytesIO(b"abc"), out)
+    def test_active_path_magic(self):
+        out = io.BytesIO()
+        push._compress_stream(io.BytesIO(b"abc"), out)
         if push.COMPRESSION == "zstd":
             self.assertEqual(out.getvalue()[:4], b"\x28\xb5\x2f\xfd")
         else:
             self.assertEqual(out.getvalue()[:6], b"\xfd7zXZ\x00")
 
-    def test_lzma_fallback_round_trip(self):
-        from io import BytesIO
-        out = BytesIO()
-        push._lzma_compress_stream(BytesIO(self._data()), out)
+    def test_xz_fallback_selected_when_zstd_unavailable(self):
+        out = io.BytesIO()
+        with mock.patch.object(push, "_ZstdCompressor", None):
+            push._compress_stream(io.BytesIO(self._data()), out)
         self.assertEqual(lzma.decompress(out.getvalue()), self._data())
-
-    @unittest.skipUnless(push._ZstdCompressor is not None,
-                         "zstd requires Python >= 3.14")
-    def test_zstd_branch_round_trip(self):
-        from io import BytesIO
-        import compression.zstd as z
-        out = BytesIO()
-        push._zstd_compress_stream(BytesIO(self._data()), out)
-        self.assertEqual(z.ZstdDecompressor().decompress(out.getvalue()),
-                         self._data())
 
 
 if __name__ == "__main__":

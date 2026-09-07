@@ -382,37 +382,15 @@ def push_blob(file_path: str, digest: str, token: str, repo: str) -> None:
 
 # ------------------------------------------------------------- compression
 
-def _lzma_compress_stream(src, dst) -> None:
-    comp = lzma.LZMACompressor(format=lzma.FORMAT_XZ, preset=1)
-    while True:
-        chunk = src.read(CHUNK)
-        if not chunk:
-            break
-        data = comp.compress(chunk)
-        if data:
-            dst.write(data)
-    dst.write(comp.flush())
-
-
-def _zstd_compress_stream(src, dst) -> None:
-    comp = _ZstdCompressor()
-    while True:
-        chunk = src.read(CHUNK)
-        if not chunk:
-            break
-        data = comp.compress(chunk)
-        if data:
-            dst.write(data)
-    dst.write(comp.flush())
-
-
 def _compress_stream(src, dst) -> None:
     """Stream `src` into `dst`: zstd on Python >= 3.14, xz fallback otherwise
     (the narinfo `Compression:` field self-describes)."""
-    if _ZstdCompressor is not None:
-        _zstd_compress_stream(src, dst)
-    else:
-        _lzma_compress_stream(src, dst)
+    comp = (_ZstdCompressor() if _ZstdCompressor is not None
+            else lzma.LZMACompressor(format=lzma.FORMAT_XZ, preset=1))
+    while chunk := src.read(CHUNK):
+        if data := comp.compress(chunk):
+            dst.write(data)
+    dst.write(comp.flush())
 
 
 def dump_nar(path: str, nar_file: str) -> bool:
