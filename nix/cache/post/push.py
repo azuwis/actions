@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Push locally built Nix store paths to a GHCR OCI binary cache.
 
-SkipRound/Fatal abort the round (exit 0/1), SkipPath skips one store path,
-NixError wraps a failed `nix` call.  NIXCACHE_REPO comes from nix/cache via
-GITHUB_ENV; NIXCACHE_SIGNING_KEY/NIXCACHE_PATHS are action inputs;
-GITHUB_TOKEN is passed by the action (not a default env var); RUNNER_TEMP.
+NIXCACHE_REPO comes from nix/cache via GITHUB_ENV; NIXCACHE_SIGNING_KEY /
+NIXCACHE_PATHS are action inputs; GITHUB_TOKEN is passed by the action (not
+a default env var); RUNNER_TEMP.
 """
 import base64
 import contextlib
@@ -74,8 +73,7 @@ def notice(msg: str) -> None:
 
 
 def fail_or_skip(code: int, msg: str) -> None:
-    """401/403 (fork PRs, missing packages:* permissions) -> SkipRound;
-    anything else -> Fatal."""
+    """401/403 -> SkipRound; anything else -> Fatal."""
     if code in (401, 403):
         raise SkipRound(
             f"{msg} (HTTP {code}: insufficient permission; fork PRs and "
@@ -153,8 +151,8 @@ def to_base32(h: str, convert=nix_hash_convert) -> str:
 
 
 def path_info_items(data):
-    """(path, info-dict) pairs from `nix path-info --json --json-format 1`,
-    which is always a map keyed by store path."""
+    """(path, info-dict) pairs from `nix path-info --json --json-format 1`
+    (always a map keyed by store path)."""
     if not isinstance(data, dict):
         raise ValueError("unexpected path-info JSON")
     for path, info in data.items():
@@ -196,7 +194,7 @@ def store_scan_candidates():
 # redirect it does follow, and never strips Authorization when a redirect
 # leaves the host.  GHCR blob uploads redirect (307) to a storage host, so
 # following with the body replayed and without the bearer token is exactly
-# what this layer must do.  Keep it in one place and test it here.
+# what this layer must do.
 
 def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
     """One request with redirects and retries; returns (status, headers,
@@ -371,7 +369,7 @@ def push_blob(file_path: str, digest: str, token: str, repo: str) -> None:
 # ------------------------------------------------------------- compression
 
 def _compress_stream(src, dst) -> None:
-    """Stream `src` into `dst`: zstd on Python >= 3.14, xz fallback."""
+    """Stream `src` into `dst`."""
     comp = (_ZstdCompressor() if _ZstdCompressor is not None
             else lzma.LZMACompressor(format=lzma.FORMAT_XZ, preset=1))
     while chunk := src.read(CHUNK):
@@ -381,8 +379,8 @@ def _compress_stream(src, dst) -> None:
 
 
 def dump_nar(path: str, nar_file: str) -> bool:
-    """`nix-store --dump <path>` compressed in-process into `nar_file`;
-    False if the dumper failed."""
+    """`nix-store --dump <path>` into `nar_file`; False if the dumper
+    failed."""
     dumper = subprocess.Popen(["nix-store", "--dump", path],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     with dumper.stdout as src, open(nar_file, "wb") as dst:
@@ -396,7 +394,7 @@ def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
                  file_hash: str, info: dict,
                  convert=nix_hash_convert) -> str:
     """Render one narinfo from a path-info dict; SkipPath for paths that
-    must not be uploaded (bad NarSize, empty FileHash/NarHash)."""
+    must not be uploaded."""
     nar_hash = to_base32(info.get("narHash", ""), convert)
     nar_size = int(info.get("narSize", 0))
     if nar_size <= 0:
@@ -449,8 +447,8 @@ def filter_paths(rows, known_entries, own_key_name):
 # ------------------------------------------------------------- index merge
 
 def load_existing_index(data) -> dict:
-    """Parse the cache-index blob; corrupt -> Fatal.  Validating `entries`
-    here is what lets the rest of the module trust its shape."""
+    """Parse the cache-index blob; corrupt -> Fatal; `entries` validated at
+    this boundary."""
     try:
         index = json.loads(data)
     except ValueError:
@@ -516,8 +514,8 @@ def fetch_existing_index(token: str, repo: str) -> dict:
 
 def signing_setup(config: "Config", index: dict,
                   work_dir: str) -> tuple:
-    """Own (key, key_name) from signing_key, ('', '') for unsigned mode;
-    SkipRound/Fatal for a signed index without a key / a key mismatch."""
+    """Own (key, key_name) from signing_key; SkipRound/Fatal for a signed
+    index without a key / a key mismatch."""
     idx_pubkey = index_public_key(index)
     if not config.signing_key:
         if idx_pubkey:
@@ -567,9 +565,8 @@ def collect_candidates(paths_input: str) -> list:
 
 
 def filter_candidates(cands, index: dict, own_key_name: str) -> tuple:
-    """(keep, info_by_path) after filtering against the index; info_by_path
-    is reused by the export step (no second path-info pass); Fatal on paths
-    left unsigned."""
+    """(keep, info_by_path); info_by_path is reused by the export step (no
+    second path-info pass); Fatal on paths left unsigned."""
     rows = []
     info_by_path = {}
     for batch in chunks(cands, STD_BATCH):
@@ -717,7 +714,6 @@ class Config:
 
 
 def run(config: "Config", work_dir: str, cache_dir: str) -> None:
-    """The push round; SkipRound/Fatal abort with the right exit code."""
     token = oci_get_token(config.repo, config.token)
     existing = fetch_existing_index(token, config.repo)
     own_key, own_key_name = signing_setup(config, existing, work_dir)
