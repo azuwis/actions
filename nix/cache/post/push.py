@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Push locally built Nix store paths to a GHCR OCI binary cache.
 
-NIXCACHE_REPO comes from nix/cache via GITHUB_ENV; NIXCACHE_SIGNING_KEY /
-NIXCACHE_PATHS are action inputs; GITHUB_TOKEN is passed by the action (not
-a default env var); RUNNER_TEMP.
+NIXCACHE_REPO comes from nix/cache via GITHUB_ENV. NIXCACHE_SIGNING_KEY and
+NIXCACHE_PATHS are action inputs. GITHUB_TOKEN is passed by the action (not
+a default env var).
 """
 import base64
 import contextlib
@@ -27,7 +27,7 @@ INDEX_MEDIA_TYPE = "application/vnd.nix.cache.index.v1+json"
 STORE_PATH_RE = re.compile(r"^/nix/store/[a-z0-9]{32}-")
 CHUNK = 1 << 20                     # 1 MiB
 
-try:  # compression.zstd is stdlib from Python 3.14; older versions use xz
+try:  # compression.zstd is stdlib from Python 3.14 (older versions use xz)
     from compression.zstd import ZstdCompressor as _ZstdCompressor
     COMPRESSION = "zstd"
     COMPRESSION_EXT = "zst"
@@ -65,7 +65,7 @@ class NixError(Exception):
 
 
 def fail_or_skip(code: int, msg: str) -> None:
-    """401/403 -> SkipRound; anything else -> Fatal."""
+    """Raises SkipRound for 401/403, Fatal otherwise."""
     if code in (401, 403):
         raise SkipRound(
             f"{msg} (HTTP {code}: insufficient permission; fork PRs and "
@@ -107,7 +107,7 @@ def header_value(headers, name: str) -> str:
 # --------------------------------------------------------------------- nix
 
 def nix(*args, input_text: str = None) -> subprocess.CompletedProcess:
-    """Run `nix ...`; NixError on failure; `input_text` feeds stdin."""
+    """Run `nix ...`, raising NixError on failure.  `input_text` feeds stdin."""
     p = subprocess.run(["nix", *args], capture_output=True, text=True,
                        input=input_text)
     if p.returncode != 0:
@@ -119,7 +119,8 @@ def nix(*args, input_text: str = None) -> subprocess.CompletedProcess:
 
 
 def nix_json(*args):
-    """`nix ... --json` output parsed; NixError on failure or bad JSON."""
+    """Parse the output of `nix ... --json`, raising NixError on failure or
+    bad JSON."""
     p = nix(*args)
     try:
         return json.loads(p.stdout)
@@ -144,7 +145,8 @@ def nix_hash_convert(h: str) -> str:
 
 
 def to_base32(h: str, convert=nix_hash_convert) -> str:
-    """SRI (sha256-<b64>) -> bare nix-base32; others pass through."""
+    """Convert SRI (sha256-<b64>) hashes to bare nix-base32, passing other
+    inputs through."""
     if h.startswith("sha256-"):
         return convert(h)
     return h
@@ -197,11 +199,12 @@ def store_scan_candidates():
 # what this layer must do.
 
 def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
-    """One request with redirects and retries; returns (status, headers,
+    """One request with redirects and retries, returning (status, headers,
     body).  `body` may be bytes or a seekable file object replayed from 0.
-    GET/HEAD follow 301/302/303/307/308, PUT/POST only 307/308; Authorization
-    is dropped when a redirect leaves the host; 408/429/5xx and transport
-    errors are retried, a persistent transport failure returns (0, [], b'')."""
+    GET/HEAD follow 301/302/303/307/308, PUT/POST only 307/308.
+    Authorization is dropped when a redirect leaves the host.  408/429/5xx
+    and transport errors are retried, and a persistent transport failure
+    returns (0, [], b'')."""
     attempt = 0
     while True:
         try:
@@ -221,7 +224,7 @@ def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
 
 
 def _send_request(method, url, headers, body, timeout=30.0):
-    """One transfer: a request plus redirects; transport errors propagate
+    """One transfer (request plus redirects).  Transport errors propagate
     to the retry loop."""
     current_url = url
     current_headers = dict(headers)
@@ -302,8 +305,8 @@ def oci_get_token(repo: str, token: str) -> str:
 
 
 def fetch_manifest(tag: str, token: str, repo: str) -> tuple:
-    """GET the manifest; 404 = not found (empty index), body empty on any
-    non-200."""
+    """GET the manifest.  404 means not found (empty index), and the body
+    is empty on any non-200."""
     st, _, body = http_request(
         "GET", manifest_url(repo, tag),
         headers={"Authorization": f"Bearer {token}",
@@ -334,7 +337,7 @@ def layer_digest(manifest_body) -> str:
 
 
 def blob_digest(path: str) -> str:
-    """`sha256:<hex>` of a file; the single hash pass, also feeding FileHash."""
+    """`sha256:<hex>` of a file.  The single hash pass also feeds FileHash."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         while b := f.read(CHUNK):
@@ -387,8 +390,8 @@ def _compress_stream(src, dst) -> None:
 
 
 def dump_nar(path: str, nar_file: str) -> bool:
-    """`nix-store --dump <path>` into `nar_file`; False if the dumper
-    failed."""
+    """`nix-store --dump <path>` into `nar_file`, returning False if the
+    dumper failed."""
     dumper = subprocess.Popen(["nix-store", "--dump", path],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     with dumper.stdout as src, open(nar_file, "wb") as dst:
@@ -401,8 +404,8 @@ def dump_nar(path: str, nar_file: str) -> bool:
 def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
                  file_hash: str, info: dict,
                  convert=nix_hash_convert) -> str:
-    """Render one narinfo from a path-info dict; SkipPath for paths that
-    must not be uploaded."""
+    """Render one narinfo from a path-info dict.  Raises SkipPath for paths
+    that must not be uploaded."""
     nar_hash = to_base32(info.get("narHash", ""), convert)
     nar_size = int(info.get("narSize", 0))
     if nar_size <= 0:
@@ -455,8 +458,8 @@ def filter_paths(rows, known_entries, own_key_name):
 # ------------------------------------------------------------- index merge
 
 def load_existing_index(data) -> dict:
-    """Parse the cache-index blob; corrupt -> Fatal; `entries` validated at
-    this boundary."""
+    """Parse the cache-index blob, raising Fatal when corrupt.  `entries`
+    is validated at this boundary."""
     try:
         index = json.loads(data)
     except ValueError:
@@ -491,7 +494,8 @@ def index_public_key(index: dict) -> str:
 # --------------------------------------------------------------------- flow
 
 def fetch_existing_index(token: str, repo: str) -> dict:
-    """Existing cache-index dict ({} when empty); SkipRound when unavailable."""
+    """Return the existing cache-index dict, {} when empty.  An unavailable
+    index raises SkipRound."""
     st, body = fetch_manifest("cache-index", token, repo)
     if st == 200:
         idx_digest = layer_digest(body)
@@ -514,8 +518,8 @@ def fetch_existing_index(token: str, repo: str) -> dict:
 
 def signing_setup(config: "Config", index: dict,
                   work_dir: str) -> tuple:
-    """Own (key, key_name) from signing_key; SkipRound/Fatal for a signed
-    index without a key, an underivable key, or a key mismatch."""
+    """Derive (key, key_name) from signing_key.  Raise SkipRound/Fatal for
+    a signed index without a key, an underivable key, or a key mismatch."""
     idx_pubkey = index_public_key(index)
     if not config.signing_key:
         if idx_pubkey:
@@ -538,8 +542,8 @@ def signing_setup(config: "Config", index: dict,
 
 
 def collect_candidates(paths_input: str) -> list:
-    """Candidate paths: closure expansion of paths_input, or whole-store
-    scan when empty; Fatal on an invalid store path."""
+    """Candidate paths from a closure expansion of paths_input, or a
+    whole-store scan when empty.  Raises Fatal on an invalid store path."""
     if paths_input:
         cand = []
         for p in paths_input.split():
@@ -565,8 +569,8 @@ def collect_candidates(paths_input: str) -> list:
 
 
 def filter_candidates(cands, index: dict, own_key_name: str) -> tuple:
-    """(keep, info_by_path); info_by_path is reused by the export step (no
-    second path-info pass); Fatal on paths left unsigned."""
+    """Return (keep, info_by_path).  info_by_path is reused by the export
+    step (no second path-info pass), and paths left unsigned raise Fatal."""
     rows = []
     info_by_path = {}
     for batch in chunks(cands, STD_BATCH):
@@ -590,8 +594,9 @@ def filter_candidates(cands, index: dict, own_key_name: str) -> tuple:
 
 def export_upload(paths, info_by_path: dict, token: str, repo: str,
                   cache_dir: str, generated: str) -> tuple:
-    """Export + upload loop -> (uploaded, skipped, new_entries for the
-    index merge); a SkipPath is warned about and counted as skipped."""
+    """Export and upload each path, returning (uploaded, skipped,
+    new_entries for the index merge).  A SkipPath is warned about and
+    counted as skipped."""
     nar_dir = os.path.join(cache_dir, "nar")
     os.makedirs(nar_dir, exist_ok=True)
     new_entries = {}

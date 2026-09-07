@@ -478,9 +478,9 @@ class _LocalServer:
 class HttpRequestTest(unittest.TestCase):
     """http_request semantics against a real local HTTP server: 408/429/5xx
     and transport errors retried like curl --retry 3 --retry-all-errors;
-    GET/HEAD follow any 30x, PUT/POST only 307/308 replaying the body and
-    dropping Authorization when a redirect leaves the host; retries=0 call
-    sites never retry."""
+    GET/HEAD follow 301/302/303/307/308, PUT/POST only 307/308 replaying the
+    body and dropping Authorization when a redirect leaves the host;
+    retries=0 call sites never retry."""
 
     URL = "https://ghcr.io/v2/o/r/nix-cache/manifests/cache-index"
 
@@ -579,7 +579,7 @@ class HttpRequestTest(unittest.TestCase):
             self.assertEqual(request[2], payload)
 
     def test_put_302_not_followed(self):
-        # GET/HEAD follow any 30x; PUT/POST only 307/308 (method preserved)
+        # GET/HEAD follow 301/302/303/307/308; PUT/POST only 307/308
         (status, _, _), requests = self.run_request(
             [(302, [("Location", "/up")], b"")], retries=0, method="PUT")
         self.assertEqual(status, 302)
@@ -633,8 +633,8 @@ class RealNixTest(unittest.TestCase):
                      "nix / nix-hash not on PATH")
 class FileHashEquivalenceTest(unittest.TestCase):
     """FileHash is derived from the blob digest, so `nix hash convert` on a
-    sha256:<hex> must agree byte-for-byte with `nix-hash --flat` on the file --
-    otherwise every narinfo FileHash silently changes."""
+    sha256:<hex> must agree byte-for-byte with `nix-hash --flat` on the file.
+    Otherwise every narinfo FileHash silently changes."""
 
     def test_convert_from_hex_matches_nix_hash_flat(self):
         with tempfile.NamedTemporaryFile() as f:
