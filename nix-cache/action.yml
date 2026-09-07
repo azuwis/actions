@@ -1,0 +1,22 @@
+name: Use GHCR as nix substituter
+inputs:
+  repo:
+    description: GitHub owner/repo of the GHCR cache image (ghcr.io/<repo>/nix-cache)
+    default: ${{ github.repository }}
+  port:
+    description: Port for the local cache proxy
+    default: "37515"
+  public_key:
+    description: Cache signing public key (name:base64). Leave empty for unsigned mode (require-sigs = false)
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Start cache proxy and configure substituter
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        NIXCACHE_PORT: ${{ inputs.port }}
+        NIXCACHE_PUBLIC_KEY: ${{ inputs.public_key }}
+        NIXCACHE_REPO: ${{ inputs.repo }}
+      run: exec ${{ github.action_path }}/main.sh

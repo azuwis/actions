@@ -1,0 +1,18 @@
+name: Use GHCR as nix substituter (post actions)
+inputs:
+  paths:
+    description: Whitespace-separated store paths whose closures are pushed, empty = scan the whole store for paths with no external signature
+    default: ""
+  signing_key:
+    description: Cache signing key contents (name:base64), required if the cache index is signed, leave empty for unsigned mode
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Push local builds to GHCR cache
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        NIXCACHE_PATHS: ${{ inputs.paths }}
+        NIXCACHE_SIGNING_KEY: ${{ inputs.signing_key }}
+      run: exec python3 ${{ github.action_path }}/push.py
