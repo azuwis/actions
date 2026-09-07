@@ -206,7 +206,7 @@ class ExportUploadTest(unittest.TestCase):
             self.assertEqual(list(Path(d, "nar").iterdir()), [])
         self.assertEqual(result, (0, 1, {}))
         self.assertEqual(warn.call_args_list,
-                         [mock.call(f"{STORE} nar exceeds ~10GiB GHCR blob "
+                         [mock.call(f"{STORE} nar exceeds 10GiB GHCR blob "
                                     "limit; skipping")])
         push_blob.assert_not_called()
         self.assertEqual(err.getvalue().splitlines(),

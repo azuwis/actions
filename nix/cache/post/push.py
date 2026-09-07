@@ -35,7 +35,7 @@ except ImportError:
     _ZstdCompressor = None
     COMPRESSION = "xz"
     COMPRESSION_EXT = "xz"
-MAX_NAR_SIZE = 10737418240          # ~10 GiB GHCR layer limit
+MAX_NAR_SIZE = 10737418240          # 10 GiB GHCR layer limit
 MAX_RETRIES = 3
 RETRY_DELAY = 2
 CLOSURE_BATCH = 64                  # closure expansion batch size (ARG_MAX)
@@ -199,9 +199,9 @@ def store_scan_candidates():
 def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
     """One request with redirects and retries; returns (status, headers,
     body).  `body` may be bytes or a seekable file object replayed from 0.
-    GET/HEAD follow any 30x, PUT/POST only 307/308; Authorization is dropped
-    when a redirect leaves the host; 408/429/5xx and transport errors are
-    retried, a persistent transport failure returns (0, [], b'')."""
+    GET/HEAD follow 301/302/303/307/308, PUT/POST only 307/308; Authorization
+    is dropped when a redirect leaves the host; 408/429/5xx and transport
+    errors are retried, a persistent transport failure returns (0, [], b'')."""
     attempt = 0
     while True:
         try:
@@ -515,7 +515,7 @@ def fetch_existing_index(token: str, repo: str) -> dict:
 def signing_setup(config: "Config", index: dict,
                   work_dir: str) -> tuple:
     """Own (key, key_name) from signing_key; SkipRound/Fatal for a signed
-    index without a key / a key mismatch."""
+    index without a key, an underivable key, or a key mismatch."""
     idx_pubkey = index_public_key(index)
     if not config.signing_key:
         if idx_pubkey:
@@ -611,7 +611,7 @@ def export_upload(paths, info_by_path: dict, token: str, repo: str,
                     raise SkipPath(f"failed to dump {path}")
                 size = os.path.getsize(nar_file)
                 if size > MAX_NAR_SIZE:
-                    raise SkipPath(f"{path} nar exceeds ~10GiB GHCR blob "
+                    raise SkipPath(f"{path} nar exceeds 10GiB GHCR blob "
                                    "limit")
                 nar_digest = blob_digest(nar_file)
                 try:
