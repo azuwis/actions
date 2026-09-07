@@ -62,7 +62,7 @@ jobs:
             }).listen(5001);
       - name: Prepare
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete test-release --yes || true
           echo "GH_TOKEN=$GH_TOKEN" >> "$GITHUB_ENV"
