@@ -70,21 +70,14 @@ class Config:
     runner_temp: str
 
     @classmethod
-    def from_env(cls, env: dict) -> "Config":
+    def from_env(cls) -> "Config":
         return cls(
-            repo=env.get("NIXCACHE_REPO", "").lower(),
-            github_token=env.get("GITHUB_TOKEN", ""),
-            signing_key=env.get("NIXCACHE_SIGNING_KEY", ""),
-            paths=env.get("NIXCACHE_PATHS", ""),
-            runner_temp=env.get("RUNNER_TEMP", ""),
+            repo=os.environ.get("NIXCACHE_REPO", "").lower(),
+            github_token=os.environ.get("GITHUB_TOKEN", ""),
+            signing_key=os.environ.get("NIXCACHE_SIGNING_KEY", ""),
+            paths=os.environ.get("NIXCACHE_PATHS", ""),
+            runner_temp=os.environ.get("RUNNER_TEMP", ""),
         )
-
-
-@dataclass(frozen=True)
-class Summary:
-    uploaded: int = 0
-    skipped: int = 0
-    total: int = 0
 
 
 def raise_http_error(code: int, msg: str) -> None:
@@ -138,9 +131,8 @@ def nix(*args, input_text: str = None) -> subprocess.CompletedProcess:
 
 def nix_json(*args):
     """Run Nix and parse its JSON output."""
-    p = nix(*args)
     try:
-        return json.loads(p.stdout)
+        return json.loads(nix(*args).stdout)
     except ValueError:
         raise PushError(f"`nix {' '.join(args)}` returned unparseable JSON") \
             from None
@@ -181,67 +173,49 @@ def sign_paths(key_file: str, paths) -> None:
 # what this layer must do.
 
 def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
-    """One request with redirects and retries, returning (status, headers,
-    body).  `body` may be bytes or a seekable file object replayed from 0.
-    GET/HEAD follow 301/302/303/307/308, PUT/POST only 307/308.
-    Authorization is dropped when a redirect leaves the host.  408/429/5xx
-    and transport errors are retried, and a persistent transport failure
-    returns (0, [], b'')."""
+    """One request (plus redirects), retried, returning (status, headers, body).
+    `body` may be bytes or a seekable file object replayed from 0.  GET/HEAD
+    follow 301/302/303/307/308, PUT/POST only 307/308.  Authorization is dropped
+    when a redirect leaves the host.  408/429/5xx and transport errors are
+    retried; a persistent transport failure returns (0, [], b'')."""
     for attempt in range(retries + 1):
-        try:
-            response = _send_request(method, url, headers or {}, body,
-                                     timeout)
-        except (OSError, http.client.HTTPException):
-            response = (0, [], b"")
-        status = response[0]
+        current_url = url
+        current_headers = dict(headers or {})
+        hops = 0
+        while True:
+            parts = urllib.parse.urlsplit(current_url)
+            path = parts.path or "/"
+            if parts.query:
+                path += "?" + parts.query
+            port = parts.port or (443 if parts.scheme == "https" else 80)
+            if hasattr(body, "seek"):
+                body.seek(0)
+            conn = http.client.HTTPSConnection(parts.hostname, port,
+                                               timeout=timeout)
+            try:
+                conn.request(method, path, body=body, headers=current_headers)
+                resp = conn.getresponse()
+                status, hdrs, data = resp.status, resp.getheaders(), resp.read()
+            except (OSError, http.client.HTTPException):
+                status, hdrs, data = 0, [], b""
+            finally:
+                conn.close()
+            location = header_value(hdrs, "Location")
+            follows = method in ("GET", "HEAD") or status in (307, 308)
+            if (status not in REDIRECT_STATUSES or not location or not follows
+                    or hops >= MAX_REDIRECTS):
+                break
+            new_url = urllib.parse.urljoin(current_url, location)
+            if urllib.parse.urlsplit(new_url).hostname != parts.hostname:
+                current_headers = {
+                    k: v for k, v in current_headers.items()
+                    if k.lower() != "authorization"
+                }
+            current_url, hops = new_url, hops + 1
         retryable = status == 0 or status >= 500 or status in (408, 429)
         if not retryable or attempt == retries:
-            return response
-        time.sleep(RETRY_DELAY)
-
-
-def _send_request(method, url, headers, body, timeout=30.0):
-    """One transfer (request plus redirects).  Transport errors propagate
-    to the retry loop."""
-    current_url = url
-    current_headers = dict(headers)
-    hops = 0
-    while True:
-        parts = urllib.parse.urlsplit(current_url)
-        path = parts.path or "/"
-        if parts.query:
-            path += "?" + parts.query
-        port = parts.port or (443 if parts.scheme == "https" else 80)
-        if hasattr(body, "seek"):
-            body.seek(0)
-        conn = http.client.HTTPSConnection(parts.hostname, port,
-                                           timeout=timeout)
-        try:
-            conn.request(method, path, body=body, headers=current_headers)
-            resp = conn.getresponse()
-            data = resp.read()
-            status = resp.status
-            hdrs = resp.getheaders()
-        finally:
-            conn.close()
-        location = header_value(hdrs, "Location")
-        follows = method in ("GET", "HEAD") or status in (307, 308)
-        if (status not in REDIRECT_STATUSES or not location
-                or not follows or hops >= MAX_REDIRECTS):
             return status, hdrs, data
-        new_url = urllib.parse.urljoin(current_url, location)
-        if urllib.parse.urlsplit(new_url).hostname != parts.hostname:
-            current_headers = {
-                k: v for k, v in current_headers.items()
-                if k.lower() != "authorization"
-            }
-        current_url = new_url
-        hops += 1
-
-
-def token_url(repo: str) -> str:
-    scope = f"repository:{repo}/nix-cache:pull,push"
-    return f"https://{REGISTRY}/token?scope={scope}&service={REGISTRY}"
+        time.sleep(RETRY_DELAY)
 
 
 def build_put_url(location: str, digest: str) -> str:
@@ -255,7 +229,7 @@ def layer_digest(manifest_body) -> str:
     try:
         digest = json.loads(manifest_body)["layers"][0]["digest"]
     except (ValueError, KeyError, TypeError, IndexError):
-        raise PushError("invalid OCI manifest") from None
+        digest = ""
     if not isinstance(digest, str) or not digest:
         raise PushError("invalid OCI manifest")
     return digest
@@ -283,19 +257,19 @@ class Registry:
             raise PushError(
                 "GITHUB_TOKEN is unset; a composite action must pass it "
                 "explicitly as GITHUB_TOKEN: ${{ github.token }}")
+        scope = f"repository:{repo}/nix-cache:pull,push"
         basic = base64.b64encode(f"token:{github_token}".encode()).decode()
         status, _, body = http_request(
-            "GET", token_url(repo),
+            "GET", f"https://{REGISTRY}/token?scope={scope}&service={REGISTRY}",
             headers={"Authorization": f"Basic {basic}"},
             timeout=30.0, retries=MAX_RETRIES)
         if status != 200:
-            raise_http_error(
-                status, "failed to obtain GHCR registry token "
-                f"(scope: repository:{repo}/nix-cache:pull,push)")
+            raise_http_error(status, "failed to obtain GHCR registry token "
+                             f"(scope: {scope})")
         try:
             token = json.loads(body)["token"]
-        except (ValueError, KeyError, TypeError):
-            raise PushError("GHCR token response is invalid") from None
+        except (ValueError, KeyError, TypeError, IndexError):
+            token = ""
         if not isinstance(token, str) or not token:
             raise PushError("GHCR token response is invalid")
         return cls(repo, token)
@@ -385,23 +359,16 @@ class Registry:
         """Upload an index and its OCI manifest, returning the index digest."""
         index_body = json.dumps(index, indent=2, sort_keys=True).encode()
         config_body = b"{}\n"
-        descriptors = []
-        for media_type, body in ((CONFIG_MEDIA_TYPE, config_body),
-                                 (INDEX_MEDIA_TYPE, index_body)):
-            descriptors.append({
-                "mediaType": media_type,
-                "digest": self.push_blob(body),
-                "size": len(body),
-            })
-        config, layer = descriptors
-        manifest = {
-            "schemaVersion": 2,
-            "mediaType": MANIFEST_MEDIA_TYPE,
-            "config": config,
-            "layers": [layer],
-        }
-        self.put_manifest("cache-index", json.dumps(
-            manifest, separators=(",", ":")))
+        config = {"mediaType": CONFIG_MEDIA_TYPE,
+                  "digest": self.push_blob(config_body),
+                  "size": len(config_body)}
+        layer = {"mediaType": INDEX_MEDIA_TYPE,
+                 "digest": self.push_blob(index_body),
+                 "size": len(index_body)}
+        manifest = {"schemaVersion": 2, "mediaType": MANIFEST_MEDIA_TYPE,
+                    "config": config, "layers": [layer]}
+        self.put_manifest("cache-index",
+                          json.dumps(manifest, separators=(",", ":")))
         return layer["digest"]
 
     def verify(self, index_digest: str) -> None:
@@ -568,19 +535,19 @@ def load_path_infos(paths, *, recursive=False, batch_size=STD_BATCH) -> dict:
 
 def collect_path_infos(paths_input: str) -> dict:
     """Path info for an explicit closure, or for the whole store."""
-    if paths_input:
-        candidates = []
-        for p in paths_input.split():
-            if not STORE_PATH_RE.match(p):
-                raise PushError(f"invalid store path: {p}")
-            if not os.path.exists(p):
-                warn(f"store path not found: {p}; skipping")
-                continue
+    if not paths_input:
+        return path_infos()
+    candidates = []
+    for p in paths_input.split():
+        if not STORE_PATH_RE.match(p):
+            raise PushError(f"invalid store path: {p}")
+        if os.path.exists(p):
             candidates.append(p)
-        infos = load_path_infos(
-            candidates, recursive=True, batch_size=CLOSURE_BATCH)
-        return dict(sorted(infos.items()))
-    return path_infos()
+        else:
+            warn(f"store path not found: {p}; skipping")
+    infos = load_path_infos(candidates, recursive=True,
+                            batch_size=CLOSURE_BATCH)
+    return dict(sorted(infos.items()))
 
 
 def export_one(path: str, hash_prefix: str, info: dict, registry: Registry,
@@ -635,7 +602,7 @@ def export_paths(paths, info_by_path: dict, registry: Registry,
     return skipped, new_entries
 
 
-def run(config: Config, work_dir: str) -> Summary:
+def run(config: Config, work_dir: str) -> None:
     registry = Registry.login(config.repo, config.github_token)
     existing = registry.fetch_index()
     public_key = signing_setup(config.signing_key, existing, work_dir)
@@ -643,49 +610,44 @@ def run(config: Config, work_dir: str) -> Summary:
     paths = list(info_by_path)
     if not paths:
         print("Nothing to upload")
-        return Summary(total=len(existing.get("entries") or {}))
+        return
     if public_key:
         with log_group("nix-cache sign"):
             sign_paths(os.path.join(work_dir, "signing.key"), paths)
         info_by_path = load_path_infos(paths)
-    key_name = public_key.partition(":")[0]
-    keep = select_paths(info_by_path, existing, key_name)
+    keep = select_paths(info_by_path, existing, public_key.partition(":")[0])
     if not keep:
         print("Nothing to upload")
-        return Summary(total=len(existing.get("entries") or {}))
+        return
     generated = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     skipped, new_entries = export_paths(
         keep, info_by_path, registry, work_dir, generated)
     if not new_entries:
         print("Nothing new to upload")
-        return Summary(skipped=skipped,
-                       total=len(existing.get("entries") or {}))
+        return
     index = merge_index(existing, new_entries, public_key, config.repo,
                         generated)
     print(f"index: {len(index['entries'])} total entries "
           f"({len(new_entries)} new)")
-    index_digest = registry.publish_index(index)
-    registry.verify(index_digest)
-    return Summary(uploaded=len(new_entries), skipped=skipped,
-                   total=len(index["entries"]))
+    registry.verify(registry.publish_index(index))
+    print(f"::notice::nix-cache: uploaded {len(new_entries)}, "
+          f"skipped {skipped}, index entries {len(index['entries'])}",
+          file=sys.stderr)
 
 
-def main(env=None) -> int:
-    config = Config.from_env(os.environ if env is None else env)
+def main() -> int:
+    config = Config.from_env()
     try:
         with tempfile.TemporaryDirectory(
-                prefix="nix-cache-", dir=config.runner_temp or None) as work_dir:
-            summary = run(config, work_dir)
+                prefix="nix-cache-",
+                dir=config.runner_temp or None) as work_dir:
+            run(config, work_dir)
     except SkipPush as e:
         warn(str(e))
         return 0
     except (PushError, OSError) as e:
         print(f"::error::{e}", file=sys.stderr)
         return 1
-    if summary.uploaded:
-        print(f"::notice::nix-cache: uploaded {summary.uploaded}, "
-              f"skipped {summary.skipped}, index entries {summary.total}",
-              file=sys.stderr)
     return 0
 
 
