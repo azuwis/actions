@@ -293,7 +293,7 @@ def oci_get_token(repo: str, token: str) -> str:
     if st == 200:
         try:
             oci_token = (json.loads(body) or {}).get("token", "") or ""
-        except (ValueError, AttributeError, TypeError):
+        except ValueError:
             oci_token = ""
         if oci_token:
             return oci_token
@@ -753,8 +753,6 @@ def main(env=None) -> None:
     work_dir = os.path.join(config.runner_temp or "/tmp", "nixcache-work")
     cache_dir = os.path.join(work_dir, "cache")
     os.makedirs(work_dir, exist_ok=True)
-    if not config.runner_temp:
-        warn("RUNNER_TEMP unset; using /tmp")
     try:
         run(config, work_dir, cache_dir)
     except SkipRound as e:
