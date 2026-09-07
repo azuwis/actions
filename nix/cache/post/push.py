@@ -1,20 +1,10 @@
 #!/usr/bin/env python3
 """Push locally built Nix store paths to a GHCR OCI binary cache.
 
-Flow: OCI token exchange -> candidate collection (paths mode or whole-store
-scan) -> filter against the existing cache-index -> export (`nix-store --dump`
-+ in-process zstd/xz compression) -> blob/manifest upload (HEAD fast-path,
-POST-init, PUT with digest query) -> cache-index merge -> readback verification.
-
-The flow is exception-driven: `SkipRound` warns and exits 0 (empty round,
-401/403, index unavailable); `Fatal` errors and exits 1 (corrupt index,
-signing failure, HTTP failures); `SkipPath` skips one store path; `NixError`
-wraps a failed `nix` command and call sites decide skip vs `Fatal`.
-
-Environment: NIXCACHE_REPO (from nix/cache via GITHUB_ENV),
-NIXCACHE_SIGNING_KEY / NIXCACHE_PATHS (action inputs), GITHUB_TOKEN (passed by
-the action from the github.token context -- it is NOT a default environment
-variable, so it is empty unless declared), RUNNER_TEMP.
+SkipRound/Fatal abort the round (exit 0/1), SkipPath skips one store path,
+NixError wraps a failed `nix` call.  NIXCACHE_REPO comes from nix/cache via
+GITHUB_ENV; NIXCACHE_SIGNING_KEY/NIXCACHE_PATHS are action inputs;
+GITHUB_TOKEN is passed by the action (not a default env var); RUNNER_TEMP.
 """
 import base64
 import contextlib
@@ -121,8 +111,7 @@ def header_value(headers, name: str) -> str:
 # --------------------------------------------------------------------- nix
 
 def nix(*args, input_text: str = None) -> subprocess.CompletedProcess:
-    """Run `nix ...`; raise NixError on non-zero exit.  `input_text` is fed
-    to stdin."""
+    """Run `nix ...`; NixError on failure; `input_text` feeds stdin."""
     p = subprocess.run(["nix", *args], capture_output=True, text=True,
                        input=input_text)
     if p.returncode != 0:
@@ -144,7 +133,6 @@ def nix_json(*args):
 
 
 def nix_key_public(secret: str) -> str:
-    """`nix key convert-secret-to-public` reading the secret on stdin."""
     try:
         return nix("key", "convert-secret-to-public",
                    input_text=secret).stdout.strip()
@@ -189,7 +177,6 @@ def expand_closure_batch(batch):
 
 
 def sign_paths(key_file: str, paths) -> None:
-    """`nix store sign --key-file` for all paths; Fatal if any batch fails."""
     for batch in chunks(paths, STD_BATCH):
         try:
             nix("store", "sign", "--key-file", key_file, *batch)
@@ -215,16 +202,11 @@ def store_scan_candidates():
 # what this layer must do.  Keep it in one place and test it here.
 
 def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
-    """One HTTP request, following redirects and retrying like curl.
-    Returns (status, headers, body).
-
-    `body` may be bytes or a seekable file object (re-seek(0) before every
-    request/redirect hop, so a retried or redirected PUT replays the file).
-    GET/HEAD follow any 30x; PUT/POST only 307/308, preserving method and
-    body; Authorization is dropped when a redirect leaves the host.  Retries
-    transport errors and 408/429/5xx; a persistent transport failure returns
-    (0, [], b''), the final status otherwise.
-    """
+    """One request with redirects and retries; returns (status, headers,
+    body).  `body` may be bytes or a seekable file object replayed from 0.
+    GET/HEAD follow any 30x, PUT/POST only 307/308; Authorization is dropped
+    when a redirect leaves the host; 408/429/5xx and transport errors are
+    retried, a persistent transport failure returns (0, [], b'')."""
     attempt = 0
     while True:
         try:
@@ -297,8 +279,7 @@ def uploads_url(repo: str) -> str:
 
 
 def build_put_url(location: str, digest: str) -> str:
-    """Join an upload Location into the final PUT URL (relative/absolute,
-    `?`/`&` separator, `digest=` query parameter)."""
+    """Upload Location -> final PUT URL (`?`/`&` separator, `digest=` query)."""
     url = f"https://{REGISTRY}{location}" if location.startswith("/") \
         else location
     return f"{url}{'&' if '?' in url else '?'}digest={digest}"
@@ -393,8 +374,7 @@ def push_blob(file_path: str, digest: str, token: str, repo: str) -> None:
 # ------------------------------------------------------------- compression
 
 def _compress_stream(src, dst) -> None:
-    """Stream `src` into `dst`: zstd on Python >= 3.14, xz fallback otherwise
-    (the narinfo `Compression:` field self-describes)."""
+    """Stream `src` into `dst`: zstd on Python >= 3.14, xz fallback."""
     comp = (_ZstdCompressor() if _ZstdCompressor is not None
             else lzma.LZMACompressor(format=lzma.FORMAT_XZ, preset=1))
     while chunk := src.read(CHUNK):
@@ -418,9 +398,8 @@ def dump_nar(path: str, nar_file: str) -> bool:
 def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
                  file_hash: str, info: dict,
                  convert=nix_hash_convert) -> str:
-    """Render one narinfo from a path-info dict.  Raises SkipPath with the
-    reason for a path that must not be uploaded (bad NarSize, empty
-    FileHash/NarHash)."""
+    """Render one narinfo from a path-info dict; SkipPath for paths that
+    must not be uploaded (bad NarSize, empty FileHash/NarHash)."""
     nar_hash = to_base32(info.get("narHash", ""), convert)
     nar_size = int(info.get("narSize", 0))
     if nar_size <= 0:
@@ -452,13 +431,7 @@ def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
 
 
 def filter_paths(rows, known_entries, own_key_name):
-    """(path, signatures) rows -> (keep, missing_own_signature).
-
-    Rules: skip paths already in the index; with a key skip paths that
-    carry any signature from another cache, keep own-signed, and report
-    paths left with no signatures as an error; without a key skip
-    everything signed.
-    """
+    """(path, signatures) rows -> (keep, missing_own_signature)."""
     keep = []
     missing = []
     for path, sigs in rows:
@@ -479,8 +452,8 @@ def filter_paths(rows, known_entries, own_key_name):
 # ------------------------------------------------------------- index merge
 
 def load_existing_index(data) -> dict:
-    """Parse the downloaded cache-index blob; corrupt -> Fatal.  `entries` is
-    validated here once, so the rest of the module can trust its shape."""
+    """Parse the cache-index blob; corrupt -> Fatal.  Validating `entries`
+    here is what lets the rest of the module trust its shape."""
     try:
         index = json.loads(data)
     except ValueError:
@@ -493,7 +466,6 @@ def load_existing_index(data) -> dict:
 
 def merge_index(existing: dict, new_entries: dict, pubkey: str,
                 repo: str, registry: str, generated: str) -> dict:
-    """Build the merged cache index (provided public key, else existing one)."""
     index = {
         "version": 1,
         "repo": repo,
@@ -510,12 +482,10 @@ def merge_index(existing: dict, new_entries: dict, pubkey: str,
 
 
 def index_public_key(index: dict) -> str:
-    """public_key from the existing index as text; '' when absent."""
     return str(index.get("public_key") or "")
 
 
 def layer_digest(manifest_body) -> str:
-    """Digest of the manifest's first layer; '' when absent or unparseable."""
     try:
         layers = json.loads(manifest_body).get("layers") or []
         return layers[0].get("digest") or ""
@@ -526,8 +496,7 @@ def layer_digest(manifest_body) -> str:
 # --------------------------------------------------------------------- flow
 
 def fetch_existing_index(token: str, repo: str) -> dict:
-    """Existing cache-index dict ({} when empty); SkipRound when the remote
-    index is unavailable."""
+    """Existing cache-index dict ({} when empty); SkipRound when unavailable."""
     st, body = fetch_manifest("cache-index", token, repo)
     if st == 200:
         idx_digest = layer_digest(body)
@@ -550,9 +519,8 @@ def fetch_existing_index(token: str, repo: str) -> dict:
 
 def signing_setup(config: "Config", index: dict,
                   work_dir: str) -> tuple:
-    """Derive the own key / key name from signing_key, or return ('', '')
-    for unsigned mode.  SkipRound when a signed index has no key; Fatal on
-    derivation failure or key mismatch (rotation unsupported)."""
+    """Own (key, key_name) from signing_key, ('', '') for unsigned mode;
+    SkipRound/Fatal for a signed index without a key / a key mismatch."""
     idx_pubkey = index_public_key(index)
     if not config.signing_key:
         if idx_pubkey:
@@ -575,8 +543,8 @@ def signing_setup(config: "Config", index: dict,
 
 
 def collect_candidates(paths_input: str) -> list:
-    """Candidate store paths: paths-mode closure expansion or whole-store
-    scan.  Fatal on an invalid store path in paths mode."""
+    """Candidate paths: closure expansion of paths_input, or whole-store
+    scan when empty; Fatal on an invalid store path."""
     if paths_input:
         cand = []
         for p in paths_input.split():
@@ -602,10 +570,9 @@ def collect_candidates(paths_input: str) -> list:
 
 
 def filter_candidates(cands, index: dict, own_key_name: str) -> tuple:
-    """Batch `nix path-info`, filter against the index, and return
-    (keep, info_by_path): the keep list plus the path-info dict per kept
-    path, reused by the export step so no second `nix path-info` pass runs.
-    Fatal on paths left unsigned."""
+    """(keep, info_by_path) after filtering against the index; info_by_path
+    is reused by the export step (no second path-info pass); Fatal on paths
+    left unsigned."""
     rows = []
     info_by_path = {}
     for batch in chunks(cands, STD_BATCH):
@@ -629,10 +596,8 @@ def filter_candidates(cands, index: dict, own_key_name: str) -> tuple:
 
 def export_upload(paths, info_by_path: dict, token: str, repo: str,
                   cache_dir: str, generated: str) -> tuple:
-    """Export + narinfo + blob upload loop.  Returns
-    (uploaded, skipped, new_entries) where new_entries is {hash: entry}
-    ready for the index merge.  A path that must not be uploaded raises
-    SkipPath, which is warned about and counted as skipped."""
+    """Export + upload loop -> (uploaded, skipped, new_entries for the
+    index merge); a SkipPath is warned about and counted as skipped."""
     nar_dir = os.path.join(cache_dir, "nar")
     os.makedirs(nar_dir, exist_ok=True)
     new_entries = {}
@@ -755,8 +720,7 @@ class Config:
 
 
 def run(config: "Config", work_dir: str, cache_dir: str) -> None:
-    """The push round; raises SkipRound/Fatal to abort with the right exit
-    code and message."""
+    """The push round; SkipRound/Fatal abort with the right exit code."""
     token = oci_get_token(config.repo, config.token)
     existing = fetch_existing_index(token, config.repo)
     own_key, own_key_name = signing_setup(config, existing, work_dir)
