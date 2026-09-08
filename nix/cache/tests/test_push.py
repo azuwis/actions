@@ -213,21 +213,20 @@ class ExportUploadTest(unittest.TestCase):
         self.assertEqual(err.getvalue().splitlines(),
                          [f"::group::nix/cache export {H32}", "::endgroup::"])
 
-    def test_missing_path_info_skips_without_dumping(self):
-        err = io.StringIO()
+    def test_unexpected_narinfo_error_is_not_hidden(self):
         registry = mock.Mock()
         with tempfile.TemporaryDirectory() as d, \
-                mock.patch.object(push, "dump_nar") as dump_nar, \
-                mock.patch.object(push, "warn") as warn, \
-                mock.patch.object(sys, "stderr", err):
-            result = push.export_upload([STORE], {}, registry, d, "t")
-        self.assertEqual(result, (1, {}))
-        self.assertEqual(warn.call_args_list,
-                         [mock.call(f"nix path-info missing for {STORE}; "
-                                    "skipping")])
-        dump_nar.assert_not_called()
-        # that skip is decided before any group is opened
-        self.assertEqual(err.getvalue(), "")
+                mock.patch.object(push, "dump_nar", _fake_dump()), \
+                mock.patch.object(push, "nix_hash_convert", return_value="x"), \
+                mock.patch.object(push, "make_narinfo",
+                                  side_effect=RuntimeError("bug")), \
+                mock.patch.object(sys, "stderr", io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, "bug"):
+                push.export_upload(
+                    [STORE],
+                    {STORE: {"narHash": NIX32_ZERO, "narSize": 1000}},
+                    registry, d, "t")
+            self.assertEqual(list(Path(d, "nar").iterdir()), [])
 
 
 class PathInfoItemsTest(unittest.TestCase):
@@ -413,6 +412,13 @@ class RegistryTest(unittest.TestCase):
             "/upload/1", digest)))
         self.assertEqual(put.kwargs["body"], b"abc")
         self.assertEqual(put.kwargs["headers"]["Content-Length"], "3")
+
+    def test_malformed_existing_manifest_skips_instead_of_resetting_index(self):
+        registry = push.Registry("o/r", "secret")
+        with mock.patch.object(push.Registry, "fetch_manifest",
+                               return_value=(200, b'{"layers": []}')), \
+                self.assertRaises(push.SkipRound):
+            registry.fetch_index()
 
     def test_publish_index_builds_config_and_layer_in_memory(self):
         registry = push.Registry("o/r", "secret")

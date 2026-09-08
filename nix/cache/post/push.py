@@ -126,19 +126,8 @@ def nix_json(*args):
             from None
 
 
-def nix_key_public(secret: str) -> str:
-    try:
-        return nix("key", "convert-secret-to-public",
-                   input_text=secret).stdout.strip()
-    except NixError:
-        return ""
-
-
 def nix_hash_convert(h: str) -> str:
-    try:
-        return nix("hash", "convert", "--to", "base32", h).stdout.strip()
-    except NixError as e:
-        raise ValueError(e) from None
+    return nix("hash", "convert", "--to", "base32", h).stdout.strip()
 
 
 def path_info_items(data):
@@ -164,10 +153,7 @@ def path_infos(paths=None, recursive=False) -> dict:
 
 def sign_paths(key_file: str, paths) -> None:
     for batch in chunks(paths, STD_BATCH):
-        try:
-            nix("store", "sign", "--key-file", key_file, *batch)
-        except NixError as e:
-            raise Fatal(f"nix store sign failed ({e})") from None
+        nix("store", "sign", "--key-file", key_file, *batch)
 
 
 def store_scan_candidates():
@@ -346,7 +332,8 @@ class Registry:
                 "skipping upload")
         digest = layer_digest(manifest)
         if not digest:
-            return {}
+            raise SkipRound("failed to parse existing cache-index manifest; "
+                            "skipping upload")
         status, _, data = self.request(
             "GET", f"blobs/{digest}", timeout=120.0)
         if status != 200:
@@ -546,7 +533,8 @@ def signing_setup(signing_key: str, index: dict, work_dir: str) -> tuple:
     with open(key_file, "w") as f:
         f.write(signing_key + "\n")
     os.chmod(key_file, 0o600)
-    own_key = nix_key_public(signing_key)
+    own_key = nix("key", "convert-secret-to-public",
+                  input_text=signing_key).stdout.strip()
     if not own_key:
         raise Fatal("cannot derive public key from signing_key")
     own_key_name = own_key.split(":", 1)[0]
@@ -613,9 +601,7 @@ def export_path(path: str, hash_prefix: str, info: dict, registry: Registry,
     try:
         narinfo = make_narinfo(path, hash_prefix, size,
                                nix_hash_convert(nar_digest), info)
-    except SkipPath:
-        raise
-    except Exception as e:
+    except (NixError, TypeError, ValueError) as e:
         raise SkipPath(
             f"narinfo generation failed for {path}: {e}") from None
     registry.push_blob(nar_file, nar_digest)
@@ -636,11 +622,7 @@ def export_upload(paths, info_by_path: dict, registry: Registry,
     new_entries = {}
     skipped = 0
     for path in paths:
-        info = info_by_path.get(path)
-        if info is None:
-            warn(f"nix path-info missing for {path}; skipping")
-            skipped += 1
-            continue
+        info = info_by_path[path]
         hash_prefix = os.path.basename(path)[:32]
         nar_file = os.path.join(nar_dir, f"{hash_prefix}.nar.{COMPRESSION_EXT}")
         with log_group(f"nix/cache export {hash_prefix}"):
@@ -711,11 +693,6 @@ def run(config: "Config", work_dir: str) -> None:
 
 
 def main(env=None) -> None:
-    if sys.version_info < (3, 10):
-        print("::error::python >= 3.10 is required "
-              f"(found {sys.version_info.major}.{sys.version_info.minor})",
-              file=sys.stderr)
-        sys.exit(1)
     config = Config.from_env(os.environ if env is None else env)
     try:
         with tempfile.TemporaryDirectory(
