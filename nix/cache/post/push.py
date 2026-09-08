@@ -33,12 +33,8 @@ try:
 except ImportError:
     _ZstdCompressor = None
 
-if _ZstdCompressor is not None:
-    COMPRESSION = "zstd"
-    COMPRESSION_EXT = "zst"
-else:
-    COMPRESSION = "xz"
-    COMPRESSION_EXT = "xz"
+COMPRESSION, COMPRESSION_EXT = (
+    ("zstd", "zst") if _ZstdCompressor is not None else ("xz", "xz"))
 
 MAX_NAR_SIZE = 10737418240          # 10 GiB GHCR layer limit
 MAX_RETRIES = 3
@@ -82,16 +78,6 @@ class Config:
             paths=env.get("NIXCACHE_PATHS", ""),
             runner_temp=env.get("RUNNER_TEMP", ""),
         )
-
-
-@dataclass(frozen=True)
-class Signing:
-    public_key: str = ""
-    key_file: str = ""
-
-    @property
-    def name(self) -> str:
-        return self.public_key.partition(":")[0]
 
 
 @dataclass(frozen=True)
@@ -140,11 +126,8 @@ def header_value(headers, name: str) -> str:
 
 def nix(*args, input_text: str = None) -> subprocess.CompletedProcess:
     """Run `nix ...`; all command failures are fatal to the push."""
-    try:
-        p = subprocess.run(["nix", *args], capture_output=True, text=True,
-                           input=input_text)
-    except OSError as e:
-        raise PushError(f"failed to run `nix`: {e}") from None
+    p = subprocess.run(["nix", *args], capture_output=True, text=True,
+                       input=input_text)
     if p.returncode != 0:
         stderr = (p.stderr or "").strip()
         cmd = " ".join(args)
@@ -450,28 +433,24 @@ def _compress_stream(src, dst) -> None:
 
 
 def dump_nar(path: str, nar_file: str) -> None:
-    try:
-        with subprocess.Popen(
-                ["nix-store", "--dump", path], stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL) as dumper:
-            with dumper.stdout as src, open(nar_file, "wb") as dst:
-                _compress_stream(src, dst)
-        if dumper.returncode != 0:
-            raise SkipPath(f"failed to dump {path}")
-    except OSError as e:
-        raise PushError(f"failed to export {path}: {e}") from None
+    with subprocess.Popen(
+            ["nix-store", "--dump", path], stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL) as dumper:
+        with dumper.stdout as src, open(nar_file, "wb") as dst:
+            _compress_stream(src, dst)
+    if dumper.returncode != 0:
+        raise SkipPath(f"failed to dump {path}")
 
 
 # ------------------------------------------------------- narinfo + filtering
 
 def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
-                 file_hash: str, info: dict,
-                 convert=nix_hash_convert) -> str:
+                 file_hash: str, info: dict) -> str:
     """Render one narinfo from a path-info dict.  Raises SkipPath for paths
     that must not be uploaded."""
     nar_hash = info.get("narHash", "")
     if nar_hash.startswith("sha256-"):
-        nar_hash = convert(nar_hash)
+        nar_hash = nix_hash_convert(nar_hash)
     nar_size = int(info.get("narSize", 0))
     if nar_size <= 0:
         raise SkipPath(f"narSize <= 0 for {store_path}")
@@ -557,7 +536,7 @@ def merge_index(existing: dict, new_entries: dict, pubkey: str,
 # --------------------------------------------------------------------- flow
 
 
-def signing_setup(signing_key: str, index: dict, work_dir: str) -> Signing:
+def signing_setup(signing_key: str, index: dict, work_dir: str) -> str:
     """Prepare and validate the optional cache signing key."""
     idx_pubkey = str(index.get("public_key") or "")
     if not signing_key:
@@ -565,7 +544,7 @@ def signing_setup(signing_key: str, index: dict, work_dir: str) -> Signing:
             raise SkipPush("cache index is signed but no signing_key "
                            "provided; skipping upload (refusing unsigned "
                            "entries)")
-        return Signing()
+        return ""
     key_file = os.path.join(work_dir, "signing.key")
     with open(key_file, "w") as f:
         f.write(signing_key + "\n")
@@ -577,33 +556,31 @@ def signing_setup(signing_key: str, index: dict, work_dir: str) -> Signing:
     if idx_pubkey and idx_pubkey != own_key:
         raise PushError("index public_key differs from provided signing key "
                         "(key rotation is not supported)")
-    return Signing(own_key, key_file)
+    return own_key
 
 
-def collect_candidates(paths_input: str) -> list:
-    """Candidate paths from a closure expansion of paths_input, or a
-    whole-store scan when empty."""
+def load_path_infos(paths, *, recursive=False, batch_size=STD_BATCH) -> dict:
+    infos = {}
+    for batch in chunks(paths, batch_size):
+        infos.update(path_infos(batch, recursive=recursive))
+    return infos
+
+
+def collect_path_infos(paths_input: str) -> dict:
+    """Path info for an explicit closure, or for the whole store."""
     if paths_input:
-        cand = []
+        candidates = []
         for p in paths_input.split():
             if not STORE_PATH_RE.match(p):
                 raise PushError(f"invalid store path: {p}")
             if not os.path.exists(p):
                 warn(f"store path not found: {p}; skipping")
                 continue
-            cand.append(p)
-        expanded = []
-        for batch in chunks(cand, CLOSURE_BATCH):
-            expanded.extend(path_infos(batch, recursive=True))
-        return sorted(set(expanded))
-    return list(path_infos())
-
-
-def load_path_infos(paths) -> dict:
-    infos = {}
-    for batch in chunks(paths, STD_BATCH):
-        infos.update(path_infos(batch))
-    return infos
+            candidates.append(p)
+        infos = load_path_infos(
+            candidates, recursive=True, batch_size=CLOSURE_BATCH)
+        return dict(sorted(infos.items()))
+    return path_infos()
 
 
 def export_one(path: str, hash_prefix: str, info: dict, registry: Registry,
@@ -661,16 +638,18 @@ def export_paths(paths, info_by_path: dict, registry: Registry,
 def run(config: Config, work_dir: str) -> Summary:
     registry = Registry.login(config.repo, config.github_token)
     existing = registry.fetch_index()
-    signing = signing_setup(config.signing_key, existing, work_dir)
-    cands = collect_candidates(config.paths)
-    if not cands:
+    public_key = signing_setup(config.signing_key, existing, work_dir)
+    info_by_path = collect_path_infos(config.paths)
+    paths = list(info_by_path)
+    if not paths:
         print("Nothing to upload")
         return Summary(total=len(existing.get("entries") or {}))
-    if signing.key_file:
+    if public_key:
         with log_group("nix/cache sign"):
-            sign_paths(signing.key_file, cands)
-    info_by_path = load_path_infos(cands)
-    keep = select_paths(info_by_path, existing, signing.name)
+            sign_paths(os.path.join(work_dir, "signing.key"), paths)
+        info_by_path = load_path_infos(paths)
+    key_name = public_key.partition(":")[0]
+    keep = select_paths(info_by_path, existing, key_name)
     if not keep:
         print("Nothing to upload")
         return Summary(total=len(existing.get("entries") or {}))
@@ -681,8 +660,8 @@ def run(config: Config, work_dir: str) -> Summary:
         print("Nothing new to upload")
         return Summary(skipped=skipped,
                        total=len(existing.get("entries") or {}))
-    index = merge_index(existing, new_entries, signing.public_key,
-                        config.repo, generated)
+    index = merge_index(existing, new_entries, public_key, config.repo,
+                        generated)
     print(f"index: {len(index['entries'])} total entries "
           f"({len(new_entries)} new)")
     index_digest = registry.publish_index(index)

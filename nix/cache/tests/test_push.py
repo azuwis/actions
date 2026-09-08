@@ -72,17 +72,20 @@ class SelectPathsTest(unittest.TestCase):
 class MakeNarinfoTest(unittest.TestCase):
     def setUp(self):
         self.info = {
-            "narHash": SRI_ZERO,
+            "narHash": NIX32_ZERO,
             "narSize": 1000,
             "references": ["/nix/store/" + "b" * 32 + "-dep"],
             "deriver": "/nix/store/" + "c" * 32 + "-pkg-1.0.drv",
             "signatures": ["own-key:sig1"],
         }
-        self.convert = lambda h: NIX32_ZERO
 
     def test_sri_converted_with_single_sha256_prefix(self):
-        text = push.make_narinfo(STORE, H32, 123, "f" * 52, self.info,
-                                 convert=self.convert)
+        info = dict(self.info)
+        info["narHash"] = SRI_ZERO
+        with mock.patch.object(
+                push, "nix_hash_convert", return_value=NIX32_ZERO) as convert:
+            text = push.make_narinfo(STORE, H32, 123, "f" * 52, info)
+        convert.assert_called_once_with(SRI_ZERO)
         self.assertIn("NarHash: sha256:" + NIX32_ZERO, text)
         self.assertEqual(text.count("NarHash: sha256:"), 1)
         self.assertIn("StorePath: " + STORE, text)
@@ -96,29 +99,23 @@ class MakeNarinfoTest(unittest.TestCase):
         self.assertIn("Sig: own-key:sig1", text)
 
     def test_prefix_not_doubled_for_prefixed_narhash_but_convert_skipped(self):
-        called = []
         info = dict(self.info)
         info["narHash"] = "sha256:" + NIX32_ZERO  # already prefixed form
 
-        def convert(h):
-            called.append(h)
-            return NIX32_ZERO
-
-        push.make_narinfo(STORE, H32, 1, "f" * 52, info, convert=convert)
-        self.assertEqual(called, [])  # non-SRI input is passed through untouched
+        with mock.patch.object(push, "nix_hash_convert") as convert:
+            push.make_narinfo(STORE, H32, 1, "f" * 52, info)
+        convert.assert_not_called()  # non-SRI input is passed through untouched
 
     def test_nar_size_zero_skips(self):
         info = dict(self.info)
         info["narSize"] = 0
         with self.assertRaises(push.SkipPath) as cm:
-            push.make_narinfo(STORE, H32, 1, "f" * 52, info,
-                              convert=self.convert)
+            push.make_narinfo(STORE, H32, 1, "f" * 52, info)
         self.assertEqual(str(cm.exception), f"narSize <= 0 for {STORE}")
 
     def test_empty_file_hash_skips(self):
         with self.assertRaises(push.SkipPath) as cm:
-            push.make_narinfo(STORE, H32, 1, "", self.info,
-                              convert=self.convert)
+            push.make_narinfo(STORE, H32, 1, "", self.info)
         self.assertEqual(str(cm.exception),
                          f"empty FileHash/NarHash for {STORE}")
 
@@ -126,8 +123,7 @@ class MakeNarinfoTest(unittest.TestCase):
         info = dict(self.info)
         info["narHash"] = ""
         with self.assertRaises(push.SkipPath) as cm:
-            push.make_narinfo(STORE, H32, 1, "f" * 52, info,
-                              convert=self.convert)
+            push.make_narinfo(STORE, H32, 1, "f" * 52, info)
         self.assertEqual(str(cm.exception),
                          f"empty FileHash/NarHash for {STORE}")
 
@@ -150,11 +146,7 @@ class ExportPathsTest(unittest.TestCase):
     def test_dump_failure_skips_and_the_rest_upload(self):
         good = "/nix/store/" + "a" * 32 + "-good"
         bad = "/nix/store/" + "b" * 32 + "-bad"
-        # narHash must be a form to_base32 passes through untouched:
-        # make_narinfo binds convert=nix_hash_convert as a DEFAULT ARGUMENT, so
-        # patching the module global does not intercept it, and an SRI hash
-        # would shell out to a `nix` that is not on PATH in the CI unit-tests
-        # step (it runs before ./nix installs anything).
+        # Keep narHash in nix32 form; only FileHash conversion is mocked below.
         infos = {p: {"narHash": NIX32_ZERO, "narSize": 1000}
                  for p in (good, bad)}
         registry = mock.Mock()
@@ -331,7 +323,19 @@ class SigningSetupTest(unittest.TestCase):
             for index in ({}, {"public_key": None}, {"public_key": ""}):
                 self.assertEqual(
                     push.signing_setup("", index, work_dir),
-                    push.Signing())
+                    "")
+
+    def test_key_returns_public_key_and_writes_secret(self):
+        converted = subprocess.CompletedProcess(
+            ["nix"], 0, stdout="cache-key:public\n", stderr="")
+        with tempfile.TemporaryDirectory() as work_dir, \
+                mock.patch.object(push, "nix", return_value=converted):
+            public_key = push.signing_setup(
+                "cache-key:secret", {}, work_dir)
+            secret = Path(work_dir, "signing.key").read_text()
+
+        self.assertEqual(public_key, "cache-key:public")
+        self.assertEqual(secret, "cache-key:secret\n")
 
     def test_index_key_mismatch_fails(self):
         converted = subprocess.CompletedProcess(
@@ -345,14 +349,26 @@ class SigningSetupTest(unittest.TestCase):
         self.assertIn("key rotation is not supported", str(cm.exception))
 
 
-class CollectCandidatesTest(unittest.TestCase):
+class CollectPathInfosTest(unittest.TestCase):
     def test_closure_failure_is_not_silently_ignored(self):
         with mock.patch.object(push.os.path, "exists", return_value=True), \
                 mock.patch.object(
                     push, "path_infos",
                     side_effect=push.PushError("closure failed")):
             with self.assertRaisesRegex(push.PushError, "closure failed"):
-                push.collect_candidates(STORE)
+                push.collect_path_infos(STORE)
+
+    def test_explicit_paths_load_a_sorted_recursive_closure(self):
+        dependency = "/nix/store/" + "b" * 32 + "-dep"
+        infos = {dependency: {"narSize": 2}, STORE: {"narSize": 1}}
+        with mock.patch.object(push.os.path, "exists", return_value=True), \
+                mock.patch.object(push, "load_path_infos",
+                                  return_value=infos) as load:
+            result = push.collect_path_infos(STORE)
+
+        self.assertEqual(list(result), [STORE, dependency])
+        load.assert_called_once_with(
+            [STORE], recursive=True, batch_size=push.CLOSURE_BATCH)
 
 
 class RunTest(unittest.TestCase):
@@ -367,11 +383,10 @@ class RunTest(unittest.TestCase):
 
         with mock.patch.object(push.Registry, "login",
                                return_value=registry), \
-                mock.patch.object(push, "collect_candidates",
-                                  return_value=[STORE]), \
-                mock.patch.object(push, "load_path_infos", return_value={
+                mock.patch.object(push, "collect_path_infos", return_value={
                     STORE: {"signatures": []},
                 }), \
+                mock.patch.object(push, "load_path_infos") as reload_infos, \
                 mock.patch.object(push, "export_paths",
                                   return_value=(2, {H32: new_entry})), \
                 mock.patch.object(push.time, "strftime", return_value="t"), \
@@ -382,7 +397,34 @@ class RunTest(unittest.TestCase):
         index = registry.publish_index.call_args.args[0]
         self.assertEqual(index["entries"], {old_hash: {"name": "old"},
                                             H32: new_entry})
+        reload_infos.assert_not_called()
         registry.verify.assert_called_once_with("sha256:index")
+
+    def test_signing_refreshes_path_info(self):
+        registry = mock.Mock(spec=push.Registry)
+        registry.fetch_index.return_value = {"entries": {}}
+        config = push.Config("owner/repo", "token", "secret", STORE, "")
+        refreshed = {STORE: {"signatures": ["own-key:sig"]}}
+
+        with mock.patch.object(push.Registry, "login",
+                               return_value=registry), \
+                mock.patch.object(push, "signing_setup",
+                                  return_value="own-key:public"), \
+                mock.patch.object(push, "collect_path_infos", return_value={
+                    STORE: {"signatures": []},
+                }), \
+                mock.patch.object(push, "sign_paths") as sign_paths, \
+                mock.patch.object(push, "load_path_infos",
+                                  return_value=refreshed) as reload_infos, \
+                mock.patch.object(push, "export_paths", return_value=(0, {})), \
+                mock.patch.object(sys, "stdout", io.StringIO()), \
+                mock.patch.object(sys, "stderr", io.StringIO()):
+            summary = push.run(config, "/tmp/work")
+
+        self.assertEqual(summary, push.Summary())
+        sign_paths.assert_called_once_with(
+            "/tmp/work/signing.key", [STORE])
+        reload_infos.assert_called_once_with([STORE])
 
 
 class MainTest(unittest.TestCase):
