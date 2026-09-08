@@ -8,6 +8,7 @@ not on PATH (the CI unit-tests step runs before `./nix` installs anything).
 import http.server
 import importlib.util
 import io
+import json
 import lzma
 import shutil
 import subprocess
@@ -154,6 +155,7 @@ class ExportUploadTest(unittest.TestCase):
         # step (it runs before ./nix installs anything).
         infos = {p: {"narHash": NIX32_ZERO, "narSize": 1000}
                  for p in (good, bad)}
+        registry = mock.Mock()
 
         def fake_dump(path, nar_file):
             if path != good:
@@ -167,19 +169,18 @@ class ExportUploadTest(unittest.TestCase):
                 mock.patch.object(push, "nix_hash_convert",
                                   return_value="f" * 52), \
                 mock.patch.object(push, "warn") as warn, \
-                mock.patch.object(sys, "stderr", err), \
-                mock.patch.object(push, "push_blob") as push_blob:
-            uploaded, skipped, entries = push.export_upload(
-                [good, bad], infos, "tok", "o/r", d, "t")
+                mock.patch.object(sys, "stderr", err):
+            skipped, entries = push.export_upload(
+                [good, bad], infos, registry, d, "t")
             self.assertEqual(list(Path(d, "nar").iterdir()), [])  # cleaned up
-        self.assertEqual((uploaded, skipped), (1, 1))
+        self.assertEqual((len(entries), skipped), (1, 1))
         self.assertEqual(list(entries), ["a" * 32])
         self.assertEqual(entries["a" * 32]["name"], "good")
         self.assertEqual(entries["a" * 32]["nar_size"], 3)   # file, not narSize
         self.assertIn("NarSize: 1000", entries["a" * 32]["narinfo"])
         self.assertIn("NarHash: sha256:" + NIX32_ZERO,
                       entries["a" * 32]["narinfo"])
-        push_blob.assert_called_once()
+        registry.push_blob.assert_called_once()
         self.assertEqual(warn.call_args_list,
                          [mock.call(f"failed to dump {bad}; skipping")])
         # one group per path, opened before the work and closed after; the
@@ -194,32 +195,33 @@ class ExportUploadTest(unittest.TestCase):
 
     def test_oversized_nar_skips_before_uploading(self):
         err = io.StringIO()
+        registry = mock.Mock()
         with tempfile.TemporaryDirectory() as d, \
                 mock.patch.object(push, "dump_nar", _fake_dump()), \
                 mock.patch.object(push, "MAX_NAR_SIZE", 0), \
                 mock.patch.object(push, "warn") as warn, \
-                mock.patch.object(sys, "stderr", err), \
-                mock.patch.object(push, "push_blob") as push_blob:
+                mock.patch.object(sys, "stderr", err):
             result = push.export_upload(
                 [STORE], {STORE: {"narHash": NIX32_ZERO, "narSize": 1000}},
-                "tok", "o/r", d, "t")
+                registry, d, "t")
             self.assertEqual(list(Path(d, "nar").iterdir()), [])
-        self.assertEqual(result, (0, 1, {}))
+        self.assertEqual(result, (1, {}))
         self.assertEqual(warn.call_args_list,
                          [mock.call(f"{STORE} nar exceeds 10GiB GHCR blob "
                                     "limit; skipping")])
-        push_blob.assert_not_called()
+        registry.push_blob.assert_not_called()
         self.assertEqual(err.getvalue().splitlines(),
                          [f"::group::nix/cache export {H32}", "::endgroup::"])
 
     def test_missing_path_info_skips_without_dumping(self):
         err = io.StringIO()
+        registry = mock.Mock()
         with tempfile.TemporaryDirectory() as d, \
                 mock.patch.object(push, "dump_nar") as dump_nar, \
                 mock.patch.object(push, "warn") as warn, \
                 mock.patch.object(sys, "stderr", err):
-            result = push.export_upload([STORE], {}, "tok", "o/r", d, "t")
-        self.assertEqual(result, (0, 1, {}))
+            result = push.export_upload([STORE], {}, registry, d, "t")
+        self.assertEqual(result, (1, {}))
         self.assertEqual(warn.call_args_list,
                          [mock.call(f"nix path-info missing for {STORE}; "
                                     "skipping")])
@@ -258,7 +260,7 @@ class MergeIndexTest(unittest.TestCase):
         new = {h: {"name": "new", "narinfo": "new", "nar_digest": "sha256:x",
                    "nar_size": 1, "added": "t"}}
         index = push.merge_index(existing, new, "own-key", "owner/repo",
-                                 "ghcr.io", "2026-09-02T00:00:00Z")
+                                 "2026-09-02T00:00:00Z")
         self.assertEqual(index["entries"][h]["name"], "new")
         self.assertEqual(len(index["entries"]), 1)
         self.assertEqual(index["version"], 1)
@@ -269,12 +271,12 @@ class MergeIndexTest(unittest.TestCase):
 
     def test_public_key_kept_when_no_key(self):
         existing = {"public_key": "old-key", "entries": {}}
-        index = push.merge_index(existing, {}, "", "r", "ghcr.io", "t")
+        index = push.merge_index(existing, {}, "", "r", "t")
         self.assertEqual(index["public_key"], "old-key")
 
     def test_public_key_overridden_by_own_key(self):
         existing = {"public_key": "old-key", "entries": {}}
-        index = push.merge_index(existing, {}, "new-key", "r", "ghcr.io", "t")
+        index = push.merge_index(existing, {}, "new-key", "r", "t")
         self.assertEqual(index["public_key"], "new-key")
 
     def test_dirty_existing_json_rejected(self):
@@ -297,17 +299,18 @@ class MergeIndexTest(unittest.TestCase):
                          {"public_key": "k"})
 
 
-class IndexPublicKeyTest(unittest.TestCase):
-    """Gates the "signed index but no key" SkipRound and the key-rotation
-    Fatal, so a falsy or absent public_key must read as unsigned."""
+class SigningSetupTest(unittest.TestCase):
+    def test_signed_index_without_key_skips_round(self):
+        with tempfile.TemporaryDirectory() as work_dir, \
+                self.assertRaises(push.SkipRound):
+            push.signing_setup("", {"public_key": "k:abc"}, work_dir)
 
-    def test_text_key_returned(self):
-        self.assertEqual(push.index_public_key({"public_key": "k:abc"}),
-                         "k:abc")
-
-    def test_absent_or_falsy_reads_as_unsigned(self):
-        for index in ({}, {"public_key": None}, {"public_key": ""}):
-            self.assertEqual(push.index_public_key(index), "")
+    def test_falsy_public_key_is_unsigned(self):
+        with tempfile.TemporaryDirectory() as work_dir:
+            for index in ({}, {"public_key": None}, {"public_key": ""}):
+                self.assertEqual(
+                    push.signing_setup("", index, work_dir),
+                    ("", ""))
 
 
 class LayerDigestTest(unittest.TestCase):
@@ -344,7 +347,7 @@ class FailOrSkipTest(unittest.TestCase):
             "OCI manifest push failed (cache-index) (HTTP 500)")
 
 
-class OciGetTokenTest(unittest.TestCase):
+class RegistryLoginTest(unittest.TestCase):
     """GITHUB_TOKEN is not a default environment variable, so an empty token is
     a real failure mode: it must be named instead of surfacing as an ambiguous
     403, and the status code must be reported."""
@@ -352,7 +355,7 @@ class OciGetTokenTest(unittest.TestCase):
     def test_empty_token_fails_before_any_request(self):
         with mock.patch.object(push, "http_request") as http_request:
             with self.assertRaises(push.Fatal) as cm:
-                push.oci_get_token("o/r", "")
+                push.Registry.login("o/r", "")
         self.assertIn("GITHUB_TOKEN is unset", str(cm.exception))
         http_request.assert_not_called()
 
@@ -360,20 +363,74 @@ class OciGetTokenTest(unittest.TestCase):
         with mock.patch.object(push, "http_request",
                                return_value=(403, [], b'{"errors":[]}')):
             with self.assertRaises(push.Fatal) as cm:
-                push.oci_get_token("o/r", "ghs_fake")
+                push.Registry.login("o/r", "ghs_fake")
         self.assertIn("HTTP 403", str(cm.exception))
 
     def test_200_without_token_field_reads_as_http_200(self):
         with mock.patch.object(push, "http_request",
                                return_value=(200, [], b'{"token": ""}')):
             with self.assertRaises(push.Fatal) as cm:
-                push.oci_get_token("o/r", "ghs_fake")
+                push.Registry.login("o/r", "ghs_fake")
         self.assertIn("HTTP 200", str(cm.exception))
 
     def test_success_returns_the_registry_token(self):
         with mock.patch.object(push, "http_request",
                                return_value=(200, [], b'{"token": "oci-abc"}')):
-            self.assertEqual(push.oci_get_token("o/r", "ghs_fake"), "oci-abc")
+            registry = push.Registry.login("o/r", "ghs_fake")
+        self.assertEqual(registry, push.Registry("o/r", "oci-abc"))
+
+
+class RegistryTest(unittest.TestCase):
+    def test_request_only_sends_token_to_registry(self):
+        registry = push.Registry("o/r", "secret")
+        with mock.patch.object(push, "http_request",
+                               return_value=(200, [], b"")) as request:
+            registry.request("GET", "manifests/tag")
+            registry.request("PUT", "https://storage.example/upload")
+
+        first_headers = request.call_args_list[0].kwargs["headers"]
+        second_headers = request.call_args_list[1].kwargs["headers"]
+        self.assertEqual(first_headers["Authorization"], "Bearer secret")
+        self.assertNotIn("Authorization", second_headers)
+
+    def test_push_blob_accepts_in_memory_data(self):
+        registry = push.Registry("o/r", "secret")
+        responses = [
+            (404, [], b""),
+            (202, [("Location", "/upload/1")], b""),
+            (201, [], b""),
+        ]
+        with mock.patch.object(push.Registry, "request",
+                               side_effect=responses) as request:
+            digest = registry.push_blob(b"abc")
+
+        self.assertEqual(
+            digest,
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9c"
+            "b410ff61f20015ad")
+        put = request.call_args_list[2]
+        self.assertEqual(put.args[:2], ("PUT", push.build_put_url(
+            "/upload/1", digest)))
+        self.assertEqual(put.kwargs["body"], b"abc")
+        self.assertEqual(put.kwargs["headers"]["Content-Length"], "3")
+
+    def test_publish_index_builds_config_and_layer_in_memory(self):
+        registry = push.Registry("o/r", "secret")
+        digests = ["sha256:config", "sha256:index"]
+        with mock.patch.object(push.Registry, "push_blob",
+                               side_effect=digests) as push_blob, \
+                mock.patch.object(push.Registry,
+                                  "put_manifest") as put_manifest:
+            digest = registry.publish_index({"entries": {}})
+
+        self.assertEqual(digest, "sha256:index")
+        config_body, index_body = [call.args[0]
+                                   for call in push_blob.call_args_list]
+        self.assertEqual(config_body, b"{}\n")
+        self.assertEqual(json.loads(index_body), {"entries": {}})
+        manifest = json.loads(put_manifest.call_args.args[1])
+        self.assertEqual(manifest["config"]["digest"], "sha256:config")
+        self.assertEqual(manifest["layers"][0]["digest"], "sha256:index")
 
 
 class UrlTest(unittest.TestCase):

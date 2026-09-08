@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -79,10 +80,6 @@ def warn(msg: str) -> None:
     print(f"::warning::{msg}", file=sys.stderr)
 
 
-def notice(msg: str) -> None:
-    print(f"::notice::{msg}", file=sys.stderr)
-
-
 def chunks(seq, n):
     for i in range(0, len(seq), n):
         yield seq[i:i + n]
@@ -144,33 +141,25 @@ def nix_hash_convert(h: str) -> str:
         raise ValueError(e) from None
 
 
-def to_base32(h: str, convert=nix_hash_convert) -> str:
-    """Convert SRI (sha256-<b64>) hashes to bare nix-base32, passing other
-    inputs through."""
-    if h.startswith("sha256-"):
-        return convert(h)
-    return h
-
-
 def path_info_items(data):
     """(path, info-dict) pairs from `nix path-info --json --json-format 1`
     (always a map keyed by store path)."""
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or any(
+            not isinstance(info, dict) for info in data.values()):
         raise ValueError("unexpected path-info JSON")
-    for path, info in data.items():
-        if not isinstance(info, dict):
-            raise ValueError("unexpected path-info map value")
-        yield path, info
+    return data.items()
 
 
-def expand_closure_batch(batch):
-    try:
-        data = nix_json("path-info", "--recursive", "--json",
-                        "--json-format", "1", "--", *batch)
-        paths = [path for path, _ in path_info_items(data)]
-    except (NixError, ValueError):
-        return [], True
-    return paths, False
+def path_infos(paths=None, recursive=False) -> dict:
+    args = ["path-info"]
+    if recursive:
+        args.append("--recursive")
+    if paths is None:
+        args.append("--all")
+    args += ["--json", "--json-format", "1"]
+    if paths is not None:
+        args += ["--", *paths]
+    return dict(path_info_items(nix_json(*args)))
 
 
 def sign_paths(key_file: str, paths) -> None:
@@ -183,8 +172,7 @@ def sign_paths(key_file: str, paths) -> None:
 
 def store_scan_candidates():
     try:
-        return [path for path, _ in path_info_items(
-            nix_json("path-info", "--all", "--json", "--json-format", "1"))]
+        return list(path_infos())
     except ValueError as e:
         raise Fatal(f"unexpected `nix path-info --all` output ({e})") from None
 
@@ -205,22 +193,17 @@ def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
     Authorization is dropped when a redirect leaves the host.  408/429/5xx
     and transport errors are retried, and a persistent transport failure
     returns (0, [], b'')."""
-    attempt = 0
-    while True:
+    for attempt in range(retries + 1):
         try:
-            status, hdrs, data = _send_request(method, url, headers or {},
-                                               body, timeout)
-            if (status >= 500 or status in (408, 429)) and attempt < retries:
-                attempt += 1
-                time.sleep(RETRY_DELAY)
-                continue
-            return status, hdrs, data
+            response = _send_request(method, url, headers or {}, body,
+                                     timeout)
         except (OSError, http.client.HTTPException):
-            if attempt < retries:
-                attempt += 1
-                time.sleep(RETRY_DELAY)
-                continue
-            return 0, [], b""
+            response = (0, [], b"")
+        status = response[0]
+        retryable = status == 0 or status >= 500 or status in (408, 429)
+        if not retryable or attempt == retries:
+            return response
+        time.sleep(RETRY_DELAY)
 
 
 def _send_request(method, url, headers, body, timeout=30.0):
@@ -237,13 +220,16 @@ def _send_request(method, url, headers, body, timeout=30.0):
         port = parts.port or (443 if parts.scheme == "https" else 80)
         if hasattr(body, "seek"):
             body.seek(0)
-        conn = http.client.HTTPSConnection(parts.hostname, port, timeout=timeout)
-        conn.request(method, path, body=body, headers=current_headers)
-        resp = conn.getresponse()
-        data = resp.read()
-        status = resp.status
-        hdrs = resp.getheaders()
-        conn.close()
+        conn = http.client.HTTPSConnection(parts.hostname, port,
+                                           timeout=timeout)
+        try:
+            conn.request(method, path, body=body, headers=current_headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            status = resp.status
+            hdrs = resp.getheaders()
+        finally:
+            conn.close()
         location = header_value(hdrs, "Location")
         follows = method in ("GET", "HEAD") or status in (307, 308)
         if (status not in REDIRECT_STATUSES or not location
@@ -264,68 +250,11 @@ def token_url(repo: str) -> str:
     return f"https://{REGISTRY}/token?scope={scope}&service={REGISTRY}"
 
 
-def manifest_url(repo: str, tag: str) -> str:
-    return f"https://{REGISTRY}/v2/{repo}/nix-cache/manifests/{tag}"
-
-
-def blob_url(repo: str, digest: str) -> str:
-    return f"https://{REGISTRY}/v2/{repo}/nix-cache/blobs/{digest}"
-
-
-def uploads_url(repo: str) -> str:
-    return f"https://{REGISTRY}/v2/{repo}/nix-cache/blobs/uploads/"
-
-
 def build_put_url(location: str, digest: str) -> str:
     """Upload Location -> final PUT URL (`?`/`&` separator, `digest=` query)."""
     url = f"https://{REGISTRY}{location}" if location.startswith("/") \
         else location
     return f"{url}{'&' if '?' in url else '?'}digest={digest}"
-
-
-def oci_get_token(repo: str, token: str) -> str:
-    if not token:
-        raise Fatal("GITHUB_TOKEN is unset; a composite action must pass it "
-                    "explicitly as GITHUB_TOKEN: ${{ github.token }}")
-    auth = "Basic " + base64.b64encode(f"token:{token}".encode()).decode()
-    st, _, body = http_request(
-        "GET", token_url(repo),
-        headers={"Authorization": auth},
-        timeout=30.0, retries=MAX_RETRIES,
-    )
-    if st == 200:
-        try:
-            oci_token = (json.loads(body) or {}).get("token", "") or ""
-        except ValueError:
-            oci_token = ""
-        if oci_token:
-            return oci_token
-    raise Fatal(f"failed to obtain GHCR registry token (HTTP {st}, "
-                f"scope: repository:{repo}/nix-cache:pull,push)")
-
-
-def fetch_manifest(tag: str, token: str, repo: str) -> tuple:
-    """GET the manifest.  404 means not found (empty index), and the body
-    is empty on any non-200."""
-    st, _, body = http_request(
-        "GET", manifest_url(repo, tag),
-        headers={"Authorization": f"Bearer {token}",
-                 "Accept": MANIFEST_MEDIA_TYPE},
-        timeout=30.0,
-    )
-    return st, body if st == 200 else b""
-
-
-def put_manifest(tag: str, manifest_body, token: str, repo: str) -> None:
-    body = manifest_body.encode() if isinstance(manifest_body, str) else manifest_body
-    st, _, _ = http_request(
-        "PUT", manifest_url(repo, tag),
-        headers={"Authorization": f"Bearer {token}",
-                 "Content-Type": MANIFEST_MEDIA_TYPE},
-        body=body, timeout=60.0, retries=MAX_RETRIES,
-    )
-    if st not in (201, 200):
-        fail_or_skip(st, f"OCI manifest push failed ({tag})")
 
 
 def layer_digest(manifest_body) -> str:
@@ -345,36 +274,151 @@ def blob_digest(path: str) -> str:
     return "sha256:" + h.hexdigest()
 
 
-def push_blob(file_path: str, digest: str, token: str, repo: str) -> None:
-    """Upload one blob (HEAD fast-path -> POST -> PUT)."""
-    st, _, _ = http_request(
-        "HEAD", blob_url(repo, digest),
-        headers={"Authorization": f"Bearer {token}"}, timeout=30.0,
-    )
-    if st == 200:
-        return
-    st, hdrs, _ = http_request(
-        "POST", uploads_url(repo),
-        headers={"Authorization": f"Bearer {token}"},
-        body=b"", timeout=30.0, retries=MAX_RETRIES,
-    )
-    if st != 202:
-        fail_or_skip(st, "failed to initiate blob upload")
-    location = header_value(hdrs, "Location")
-    if not location:
-        fail_or_skip(0, "no upload location returned by registry")
-    put_url = build_put_url(location, digest)
-    size = os.path.getsize(file_path)
-    with open(file_path, "rb") as f:
-        st, _, _ = http_request(
-            "PUT", put_url,
-            headers={"Authorization": f"Bearer {token}",
-                     "Content-Type": "application/octet-stream",
-                     "Content-Length": str(size)},
-            body=f, timeout=300.0, retries=MAX_RETRIES,
+@dataclass(frozen=True)
+class Registry:
+    """Authenticated access to one GHCR cache image."""
+
+    repo: str
+    token: str
+
+    @classmethod
+    def login(cls, repo: str, github_token: str) -> "Registry":
+        if not github_token:
+            raise Fatal(
+                "GITHUB_TOKEN is unset; a composite action must pass it "
+                "explicitly as GITHUB_TOKEN: ${{ github.token }}")
+        basic = base64.b64encode(f"token:{github_token}".encode()).decode()
+        status, _, body = http_request(
+            "GET", token_url(repo),
+            headers={"Authorization": f"Basic {basic}"},
+            timeout=30.0, retries=MAX_RETRIES)
+        try:
+            token = (json.loads(body) or {}).get("token", "")
+        except (ValueError, AttributeError):
+            token = ""
+        if status == 200 and token:
+            return cls(repo, token)
+        raise Fatal(f"failed to obtain GHCR registry token (HTTP {status}, "
+                    f"scope: repository:{repo}/nix-cache:pull,push)")
+
+    def request(self, method: str, target: str, *, headers=None, **kwargs):
+        url = target if "://" in target else self.url(target)
+        request_headers = dict(headers or {})
+        if urllib.parse.urlsplit(url).hostname == REGISTRY:
+            request_headers["Authorization"] = f"Bearer {self.token}"
+        else:
+            request_headers = {
+                key: value for key, value in request_headers.items()
+                if key.lower() != "authorization"
+            }
+        return http_request(method, url, headers=request_headers, **kwargs)
+
+    def url(self, path: str) -> str:
+        return f"https://{REGISTRY}/v2/{self.repo}/nix-cache/{path}"
+
+    def fetch_manifest(self, tag: str) -> tuple:
+        """Return (status, body), with an empty body for non-200 responses."""
+        status, _, body = self.request(
+            "GET", f"manifests/{tag}",
+            headers={"Accept": MANIFEST_MEDIA_TYPE}, timeout=30.0,
         )
-    if st not in (201, 202):
-        fail_or_skip(st, f"blob upload failed for {digest}")
+        return status, body if status == 200 else b""
+
+    def put_manifest(self, tag: str, body) -> None:
+        if isinstance(body, str):
+            body = body.encode()
+        status, _, _ = self.request(
+            "PUT", f"manifests/{tag}",
+            headers={"Content-Type": MANIFEST_MEDIA_TYPE}, body=body,
+            timeout=60.0, retries=MAX_RETRIES,
+        )
+        if status not in (200, 201):
+            fail_or_skip(status, f"OCI manifest push failed ({tag})")
+
+    def fetch_index(self) -> dict:
+        """Load the current cache index, or return {} when it does not exist."""
+        status, manifest = self.fetch_manifest("cache-index")
+        if status == 404:
+            return {}
+        if status != 200:
+            raise SkipRound(
+                f"failed to fetch OCI manifest cache-index (HTTP {status}); "
+                "skipping upload")
+        digest = layer_digest(manifest)
+        if not digest:
+            return {}
+        status, _, data = self.request(
+            "GET", f"blobs/{digest}", timeout=120.0)
+        if status != 200:
+            raise SkipRound(
+                "failed to download existing cache-index blob "
+                f"(HTTP {status}); skipping upload")
+        return load_existing_index(data)
+
+    def push_blob(self, source, digest: str = "") -> str:
+        """Upload bytes or a file unless already present; return its digest."""
+        is_file = isinstance(source, (str, os.PathLike))
+        if is_file:
+            size = os.path.getsize(source)
+            digest = digest or blob_digest(source)
+        else:
+            size = len(source)
+            digest = digest or "sha256:" + hashlib.sha256(source).hexdigest()
+        status, _, _ = self.request(
+            "HEAD", f"blobs/{digest}", timeout=30.0)
+        if status == 200:
+            return digest
+        status, headers, _ = self.request(
+            "POST", "blobs/uploads/", body=b"", timeout=30.0,
+            retries=MAX_RETRIES)
+        if status != 202:
+            fail_or_skip(status, "failed to initiate blob upload")
+        location = header_value(headers, "Location")
+        if not location:
+            fail_or_skip(0, "no upload location returned by registry")
+        source_context = (open(source, "rb") if is_file
+                          else contextlib.nullcontext(source))
+        with source_context as body:
+            status, _, _ = self.request(
+                "PUT", build_put_url(location, digest),
+                headers={"Content-Type": "application/octet-stream",
+                         "Content-Length": str(size)},
+                body=body, timeout=300.0, retries=MAX_RETRIES)
+        if status not in (201, 202):
+            fail_or_skip(status, f"blob upload failed for {digest}")
+        return digest
+
+    def publish_index(self, index: dict) -> str:
+        """Upload an index and its OCI manifest, returning the index digest."""
+        index_body = json.dumps(index, indent=2, sort_keys=True).encode()
+        config_body = b"{}\n"
+        descriptors = []
+        for media_type, body in ((CONFIG_MEDIA_TYPE, config_body),
+                                 (INDEX_MEDIA_TYPE, index_body)):
+            descriptors.append({
+                "mediaType": media_type,
+                "digest": self.push_blob(body),
+                "size": len(body),
+            })
+        config, layer = descriptors
+        manifest = {
+            "schemaVersion": 2,
+            "mediaType": MANIFEST_MEDIA_TYPE,
+            "config": config,
+            "layers": [layer],
+        }
+        self.put_manifest("cache-index", json.dumps(
+            manifest, separators=(",", ":")))
+        return layer["digest"]
+
+    def verify(self, index_digest: str) -> None:
+        for _ in range(READBACK_TRIES):
+            status, body = self.fetch_manifest("cache-index")
+            if status == 200 and layer_digest(body) == index_digest:
+                return
+            time.sleep(READBACK_SLEEP)
+        raise Fatal("cache-index manifest readback did not confirm the new "
+                    "index (blobs uploaded, index not visible yet)")
 
 
 # ------------------------------------------------------------------ export
@@ -406,7 +450,9 @@ def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
                  convert=nix_hash_convert) -> str:
     """Render one narinfo from a path-info dict.  Raises SkipPath for paths
     that must not be uploaded."""
-    nar_hash = to_base32(info.get("narHash", ""), convert)
+    nar_hash = info.get("narHash", "")
+    if nar_hash.startswith("sha256-"):
+        nar_hash = convert(nar_hash)
     nar_size = int(info.get("narSize", 0))
     if nar_size <= 0:
         raise SkipPath(f"narSize <= 0 for {store_path}")
@@ -418,20 +464,19 @@ def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
     sigs = info.get("signatures", info.get("sigs", [])) or []
 
     lines = [
-        "StorePath: " + store_path,
-        "URL: nar/" + hash_prefix + ".nar." + COMPRESSION_EXT,
-        "Compression: " + COMPRESSION,
-        "FileHash: sha256:" + file_hash,
-        "FileSize: " + str(file_size),
-        "NarHash: sha256:" + nar_hash,
-        "NarSize: " + str(nar_size),
+        f"StorePath: {store_path}",
+        f"URL: nar/{hash_prefix}.nar.{COMPRESSION_EXT}",
+        f"Compression: {COMPRESSION}",
+        f"FileHash: sha256:{file_hash}",
+        f"FileSize: {file_size}",
+        f"NarHash: sha256:{nar_hash}",
+        f"NarSize: {nar_size}",
     ]
     if refs:
-        lines.append("References: " + " ".join(os.path.basename(r) for r in refs))
+        lines.append("References: " + " ".join(map(os.path.basename, refs)))
     if deriver:
-        lines.append("Deriver: " + os.path.basename(deriver))
-    for sig in sigs:
-        lines.append("Sig: " + sig)
+        lines.append(f"Deriver: {os.path.basename(deriver)}")
+    lines.extend(f"Sig: {sig}" for sig in sigs)
 
     return "\n".join(lines) + "\n"
 
@@ -471,57 +516,27 @@ def load_existing_index(data) -> dict:
 
 
 def merge_index(existing: dict, new_entries: dict, pubkey: str,
-                repo: str, registry: str, generated: str) -> dict:
-    index = {
+                repo: str, generated: str) -> dict:
+    return {
         "version": 1,
         "repo": repo,
-        "registry": registry,
-        "image": f"{registry}/{repo}/nix-cache",
+        "registry": REGISTRY,
+        "image": f"{REGISTRY}/{repo}/nix-cache",
         "generated": generated,
         "public_key": pubkey or existing.get("public_key", ""),
-        "entries": {},
+        "entries": {**(existing.get("entries") or {}), **new_entries},
         "gc_roots": [],
     }
-    index["entries"].update(existing.get("entries", {}) or {})
-    index["entries"].update(new_entries)
-    return index
-
-
-def index_public_key(index: dict) -> str:
-    return str(index.get("public_key") or "")
 
 
 # --------------------------------------------------------------------- flow
 
-def fetch_existing_index(token: str, repo: str) -> dict:
-    """Return the existing cache-index dict, {} when empty.  An unavailable
-    index raises SkipRound."""
-    st, body = fetch_manifest("cache-index", token, repo)
-    if st == 200:
-        idx_digest = layer_digest(body)
-        if idx_digest:
-            st, _, data = http_request(
-                "GET", blob_url(repo, idx_digest),
-                headers={"Authorization": f"Bearer {token}"}, timeout=120.0,
-            )
-            if st != 200:
-                raise SkipRound(
-                    f"failed to download existing cache-index blob "
-                    f"(HTTP {st}); skipping upload")
-            return load_existing_index(data)
-        return {}
-    if st == 404:
-        return {}
-    raise SkipRound(f"failed to fetch OCI manifest cache-index (HTTP {st}); "
-                    "skipping upload")
 
-
-def signing_setup(config: "Config", index: dict,
-                  work_dir: str) -> tuple:
+def signing_setup(signing_key: str, index: dict, work_dir: str) -> tuple:
     """Derive (key, key_name) from signing_key.  Raise SkipRound/Fatal for
     a signed index without a key, an underivable key, or a key mismatch."""
-    idx_pubkey = index_public_key(index)
-    if not config.signing_key:
+    idx_pubkey = str(index.get("public_key") or "")
+    if not signing_key:
         if idx_pubkey:
             raise SkipRound("cache index is signed but no signing_key "
                             "provided; skipping upload (refusing unsigned "
@@ -529,9 +544,9 @@ def signing_setup(config: "Config", index: dict,
         return "", ""
     key_file = os.path.join(work_dir, "signing.key")
     with open(key_file, "w") as f:
-        f.write(config.signing_key + "\n")
+        f.write(signing_key + "\n")
     os.chmod(key_file, 0o600)
-    own_key = nix_key_public(config.signing_key)
+    own_key = nix_key_public(signing_key)
     if not own_key:
         raise Fatal("cannot derive public key from signing_key")
     own_key_name = own_key.split(":", 1)[0]
@@ -553,37 +568,30 @@ def collect_candidates(paths_input: str) -> list:
                 warn(f"store path not found: {p}; skipping")
                 continue
             cand.append(p)
-        if cand:
-            expanded = []
-            any_failed = False
-            for batch in chunks(cand, CLOSURE_BATCH):
-                paths, failed = expand_closure_batch(batch)
-                any_failed = any_failed or failed
-                expanded.extend(paths)
-            if any_failed:
-                warn(f"closure expansion failed for a path in: {paths_input}")
-            if expanded:
-                cand = sorted(set(expanded))
-        return cand
+        expanded = []
+        failed = False
+        for batch in chunks(cand, CLOSURE_BATCH):
+            try:
+                expanded.extend(path_infos(batch, recursive=True))
+            except (NixError, ValueError):
+                failed = True
+        if failed:
+            warn(f"closure expansion failed for a path in: {paths_input}")
+        return sorted(set(expanded)) if expanded else cand
     return store_scan_candidates()
 
 
 def filter_candidates(cands, index: dict, own_key_name: str) -> tuple:
     """Return (keep, info_by_path).  info_by_path is reused by the export
     step (no second path-info pass), and paths left unsigned raise Fatal."""
-    rows = []
     info_by_path = {}
     for batch in chunks(cands, STD_BATCH):
         try:
-            data = nix_json("path-info", "--json", "--json-format", "1",
-                            "--", *batch)
-            items = list(path_info_items(data))
+            info_by_path.update(path_infos(batch))
         except (NixError, ValueError) as e:
             warn(f"nix path-info failed for a batch; skipping: {e}")
-            continue
-        for path, info in items:
-            rows.append((path, list(info.get("signatures", []) or [])))
-            info_by_path[path] = info
+    rows = [(path, list(info.get("signatures", []) or []))
+            for path, info in info_by_path.items()]
     keep, missing = filter_paths(rows, set(index.get("entries") or {}),
                                  own_key_name)
     if missing:
@@ -592,15 +600,40 @@ def filter_candidates(cands, index: dict, own_key_name: str) -> tuple:
     return keep, info_by_path
 
 
-def export_upload(paths, info_by_path: dict, token: str, repo: str,
+def export_path(path: str, hash_prefix: str, info: dict, registry: Registry,
+                nar_file: str, generated: str) -> dict:
+    """Export and upload one path, returning its index entry."""
+    if not dump_nar(path, nar_file):
+        raise SkipPath(f"failed to dump {path}")
+    size = os.path.getsize(nar_file)
+    if size > MAX_NAR_SIZE:
+        raise SkipPath(f"{path} nar exceeds 10GiB GHCR blob limit")
+
+    nar_digest = blob_digest(nar_file)
+    try:
+        narinfo = make_narinfo(path, hash_prefix, size,
+                               nix_hash_convert(nar_digest), info)
+    except SkipPath:
+        raise
+    except Exception as e:
+        raise SkipPath(
+            f"narinfo generation failed for {path}: {e}") from None
+    registry.push_blob(nar_file, nar_digest)
+    return {
+        "name": os.path.basename(path).split("-", 1)[-1],
+        "narinfo": narinfo,
+        "nar_digest": nar_digest,
+        "nar_size": size,
+        "added": generated,
+    }
+
+
+def export_upload(paths, info_by_path: dict, registry: Registry,
                   cache_dir: str, generated: str) -> tuple:
-    """Export and upload each path, returning (uploaded, skipped,
-    new_entries for the index merge).  A SkipPath is warned about and
-    counted as skipped."""
+    """Export paths, returning (skipped, new_entries for the index merge)."""
     nar_dir = os.path.join(cache_dir, "nar")
     os.makedirs(nar_dir, exist_ok=True)
     new_entries = {}
-    uploaded = 0
     skipped = 0
     for path in paths:
         info = info_by_path.get(path)
@@ -612,97 +645,24 @@ def export_upload(paths, info_by_path: dict, token: str, repo: str,
         nar_file = os.path.join(nar_dir, f"{hash_prefix}.nar.{COMPRESSION_EXT}")
         with log_group(f"nix/cache export {hash_prefix}"):
             try:
-                if not dump_nar(path, nar_file):
-                    raise SkipPath(f"failed to dump {path}")
-                size = os.path.getsize(nar_file)
-                if size > MAX_NAR_SIZE:
-                    raise SkipPath(f"{path} nar exceeds 10GiB GHCR blob "
-                                   "limit")
-                nar_digest = blob_digest(nar_file)
-                try:
-                    narinfo = make_narinfo(path, hash_prefix, size,
-                                           nix_hash_convert(nar_digest), info)
-                except SkipPath:
-                    raise
-                except Exception as e:
-                    raise SkipPath(
-                        f"narinfo generation failed for {path}: {e}") from None
-                push_blob(nar_file, nar_digest, token, repo)
-                new_entries[hash_prefix] = {
-                    "name": os.path.basename(path).split("-", 1)[-1],
-                    "narinfo": narinfo,
-                    "nar_digest": nar_digest,
-                    "nar_size": size,
-                    "added": generated,
-                }
-                uploaded += 1
-                print(f"uploaded {hash_prefix} ({size} bytes)", file=sys.stderr)
+                entry = export_path(path, hash_prefix, info, registry,
+                                    nar_file, generated)
+                new_entries[hash_prefix] = entry
+                print(f"uploaded {hash_prefix} ({entry['nar_size']} bytes)",
+                      file=sys.stderr)
             except SkipPath as e:
                 warn(f"{e}; skipping")
                 skipped += 1
             finally:
                 with contextlib.suppress(OSError):
                     os.remove(nar_file)
-    return uploaded, skipped, new_entries
-
-
-def rebuild_index(work_dir: str, existing: dict, new_entries: dict,
-                  own_key: str, repo: str, generated: str) -> dict:
-    index = merge_index(existing, new_entries, own_key, repo, REGISTRY,
-                        generated)
-    index_json = os.path.join(work_dir, "cache-index.json")
-    with open(index_json, "w") as f:
-        json.dump(index, f, indent=2, sort_keys=True)
-    print(f"index: {len(index['entries'])} total entries "
-          f"({len(new_entries)} new)")
-    return index
-
-
-def push_index(index_json: str, token: str, repo: str,
-               work_dir: str) -> str:
-    """Push index blob + config blob + manifest.  Returns index digest."""
-    index_digest = blob_digest(index_json)
-    push_blob(index_json, index_digest, token, repo)
-    config_file = os.path.join(work_dir, "config.json")
-    with open(config_file, "w") as f:
-        f.write("{}\n")
-    config_digest = blob_digest(config_file)
-    push_blob(config_file, config_digest, token, repo)
-    config_size = os.path.getsize(config_file)
-    index_size = os.path.getsize(index_json)
-    manifest = {
-        "schemaVersion": 2,
-        "mediaType": MANIFEST_MEDIA_TYPE,
-        "config": {
-            "mediaType": CONFIG_MEDIA_TYPE,
-            "digest": config_digest,
-            "size": config_size,
-        },
-        "layers": [{
-            "mediaType": INDEX_MEDIA_TYPE,
-            "digest": index_digest,
-            "size": index_size,
-        }],
-    }
-    put_manifest("cache-index", json.dumps(manifest, separators=(",", ":")),
-                 token, repo)
-    return index_digest
-
-
-def verify_readback(token: str, repo: str, index_digest: str) -> None:
-    for _ in range(READBACK_TRIES):
-        st, body = fetch_manifest("cache-index", token, repo)
-        if st == 200 and layer_digest(body) == index_digest:
-            return
-        time.sleep(READBACK_SLEEP)
-    raise Fatal("cache-index manifest readback did not confirm the new "
-                "index (blobs uploaded, index not visible yet)")
+    return skipped, new_entries
 
 
 @dataclass
 class Config:
     repo: str
-    token: str
+    github_token: str
     signing_key: str
     paths_input: str
     runner_temp: str
@@ -711,17 +671,18 @@ class Config:
     def from_env(cls, env: dict) -> "Config":
         return cls(
             repo=(env.get("NIXCACHE_REPO") or "").lower(),
-            token=env.get("GITHUB_TOKEN") or "",
+            github_token=env.get("GITHUB_TOKEN") or "",
             signing_key=env.get("NIXCACHE_SIGNING_KEY") or "",
             paths_input=env.get("NIXCACHE_PATHS") or "",
             runner_temp=env.get("RUNNER_TEMP") or "",
         )
 
 
-def run(config: "Config", work_dir: str, cache_dir: str) -> None:
-    token = oci_get_token(config.repo, config.token)
-    existing = fetch_existing_index(token, config.repo)
-    own_key, own_key_name = signing_setup(config, existing, work_dir)
+def run(config: "Config", work_dir: str) -> None:
+    registry = Registry.login(config.repo, config.github_token)
+    existing = registry.fetch_index()
+    own_key, own_key_name = signing_setup(
+        config.signing_key, existing, work_dir)
     cands = collect_candidates(config.paths_input)
     if not cands:
         print("Nothing to upload")
@@ -734,18 +695,19 @@ def run(config: "Config", work_dir: str, cache_dir: str) -> None:
         print("Nothing to upload")
         return
     generated = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    uploaded, skipped, new_entries = export_upload(
-        keep, info_by_path, token, config.repo, cache_dir, generated)
-    if uploaded == 0:
+    skipped, new_entries = export_upload(
+        keep, info_by_path, registry, work_dir, generated)
+    if not new_entries:
         print("Nothing new to upload")
         return
-    index = rebuild_index(work_dir, existing, new_entries, own_key,
-                          config.repo, generated)
-    index_digest = push_index(os.path.join(work_dir, "cache-index.json"),
-                              token, config.repo, work_dir)
-    verify_readback(token, config.repo, index_digest)
-    notice(f"nix/cache: uploaded {uploaded}, skipped {skipped}, "
-           f"index entries {len(index['entries'])}")
+    uploaded = len(new_entries)
+    index = merge_index(existing, new_entries, own_key, config.repo, generated)
+    print(f"index: {len(index['entries'])} total entries "
+          f"({len(new_entries)} new)")
+    index_digest = registry.publish_index(index)
+    registry.verify(index_digest)
+    print(f"::notice::nix/cache: uploaded {uploaded}, skipped {skipped}, "
+          f"index entries {len(index['entries'])}", file=sys.stderr)
 
 
 def main(env=None) -> None:
@@ -755,11 +717,10 @@ def main(env=None) -> None:
               file=sys.stderr)
         sys.exit(1)
     config = Config.from_env(os.environ if env is None else env)
-    work_dir = os.path.join(config.runner_temp or "/tmp", "nixcache-work")
-    cache_dir = os.path.join(work_dir, "cache")
-    os.makedirs(work_dir, exist_ok=True)
     try:
-        run(config, work_dir, cache_dir)
+        with tempfile.TemporaryDirectory(
+                prefix="nixcache-", dir=config.runner_temp or None) as work_dir:
+            run(config, work_dir)
     except SkipRound as e:
         warn(str(e))
         sys.exit(0)
