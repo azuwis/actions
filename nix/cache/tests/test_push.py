@@ -30,40 +30,43 @@ SRI_ZERO = "sha256-" + "A" * 43 + "="   # sha256 of 32 zero bytes
 NIX32_ZERO = "0" * 52
 
 
-class FilterPathsTest(unittest.TestCase):
-    def rows(self, *sigs_by_path):
-        return [(p, list(sigs)) for p, sigs in sigs_by_path]
+class SelectPathsTest(unittest.TestCase):
+    def infos(self, *sigs_by_path):
+        return {path: {"signatures": list(sigs)}
+                for path, sigs in sigs_by_path}
 
     def test_in_index_skipped(self):
-        keep, missing = push.filter_paths([(STORE, ["any-sig"])], {H32}, "own-key")
+        keep = push.select_paths(
+            self.infos((STORE, ["any-sig"])), {"entries": {H32: {}}},
+            "own-key")
         self.assertEqual(keep, [])
-        self.assertEqual(missing, [])
 
     def test_no_key_any_signature_skipped(self):
         signed = "/nix/store/" + "b" * 32 + "-signed"
         unsigned = "/nix/store/" + "c" * 32 + "-unsigned"
-        rows = [(signed, ["elsewhere:abc"]), (unsigned, [])]
-        keep, missing = push.filter_paths(rows, set(), "")
+        infos = self.infos((signed, ["elsewhere:abc"]), (unsigned, []))
+        keep = push.select_paths(infos, {}, "")
         self.assertEqual(keep, [unsigned])
-        self.assertEqual(missing, [])
 
     def test_with_key_external_signature_skipped(self):
         ext = "/nix/store/" + "b" * 32 + "-ext"
         mixed = "/nix/store/" + "c" * 32 + "-mixed"
-        rows = [(ext, ["other-cache:sig"]), (mixed, ["own-key:sig", "other-cache:sig"])]
-        keep, missing = push.filter_paths(rows, set(), "own-key")
+        infos = self.infos(
+            (ext, ["other-cache:sig"]),
+            (mixed, ["own-key:sig", "other-cache:sig"]),
+        )
+        keep = push.select_paths(infos, {}, "own-key")
         self.assertEqual(keep, [])
-        self.assertEqual(missing, [])
 
     def test_with_key_own_signature_kept(self):
-        keep, missing = push.filter_paths([(STORE, ["own-key:sig1"])], set(), "own-key")
+        keep = push.select_paths(
+            self.infos((STORE, ["own-key:sig1"])), {}, "own-key")
         self.assertEqual(keep, [STORE])
-        self.assertEqual(missing, [])
 
-    def test_missing_own_signature_reported(self):
-        keep, missing = push.filter_paths([(STORE, [])], set(), "own-key")
-        self.assertEqual(keep, [])
-        self.assertEqual(missing, [STORE])
+    def test_missing_own_signature_fails(self):
+        with self.assertRaises(push.PushError) as cm:
+            push.select_paths(self.infos((STORE, [])), {}, "own-key")
+        self.assertIn(STORE, str(cm.exception))
 
 
 class MakeNarinfoTest(unittest.TestCase):
@@ -133,12 +136,11 @@ def _fake_dump(content=b"nar"):
     """dump_nar stand-in that really creates the NAR file and succeeds."""
     def dump(path, nar_file):
         Path(nar_file).write_bytes(content)
-        return True
     return dump
 
 
-class ExportUploadTest(unittest.TestCase):
-    """export_upload: a SkipPath from any stage costs exactly one skip, still
+class ExportPathsTest(unittest.TestCase):
+    """export_paths: a SkipPath from any stage costs exactly one skip, still
     closes the log group and removes the NAR; other paths still upload.
 
     warn and stderr are captured, so the tests assert the emitted warning text
@@ -159,9 +161,8 @@ class ExportUploadTest(unittest.TestCase):
 
         def fake_dump(path, nar_file):
             if path != good:
-                return False
+                raise push.SkipPath(f"failed to dump {path}")
             Path(nar_file).write_bytes(b"nar")
-            return True
 
         err = io.StringIO()
         with tempfile.TemporaryDirectory() as d, \
@@ -170,7 +171,7 @@ class ExportUploadTest(unittest.TestCase):
                                   return_value="f" * 52), \
                 mock.patch.object(push, "warn") as warn, \
                 mock.patch.object(sys, "stderr", err):
-            skipped, entries = push.export_upload(
+            skipped, entries = push.export_paths(
                 [good, bad], infos, registry, d, "t")
             self.assertEqual(list(Path(d, "nar").iterdir()), [])  # cleaned up
         self.assertEqual((len(entries), skipped), (1, 1))
@@ -201,7 +202,7 @@ class ExportUploadTest(unittest.TestCase):
                 mock.patch.object(push, "MAX_NAR_SIZE", 0), \
                 mock.patch.object(push, "warn") as warn, \
                 mock.patch.object(sys, "stderr", err):
-            result = push.export_upload(
+            result = push.export_paths(
                 [STORE], {STORE: {"narHash": NIX32_ZERO, "narSize": 1000}},
                 registry, d, "t")
             self.assertEqual(list(Path(d, "nar").iterdir()), [])
@@ -222,34 +223,56 @@ class ExportUploadTest(unittest.TestCase):
                                   side_effect=RuntimeError("bug")), \
                 mock.patch.object(sys, "stderr", io.StringIO()):
             with self.assertRaisesRegex(RuntimeError, "bug"):
-                push.export_upload(
+                push.export_paths(
                     [STORE],
                     {STORE: {"narHash": NIX32_ZERO, "narSize": 1000}},
                     registry, d, "t")
             self.assertEqual(list(Path(d, "nar").iterdir()), [])
 
+    def test_nix_hash_failure_only_skips_that_path(self):
+        registry = mock.Mock()
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(push, "dump_nar", _fake_dump()), \
+                mock.patch.object(
+                    push, "nix_hash_convert",
+                    side_effect=push.PushError("hash conversion failed")), \
+                mock.patch.object(push, "warn") as warn, \
+                mock.patch.object(sys, "stderr", io.StringIO()):
+            result = push.export_paths(
+                [STORE], {STORE: {"narHash": NIX32_ZERO, "narSize": 1000}},
+                registry, d, "t")
 
-class PathInfoItemsTest(unittest.TestCase):
+        self.assertEqual(result, (1, {}))
+        warn.assert_called_once_with(
+            f"narinfo generation failed for {STORE}: hash conversion failed; "
+            "skipping")
+        registry.push_blob.assert_not_called()
+
+
+class PathInfosTest(unittest.TestCase):
     """`nix path-info --json --json-format 1` is always a map keyed by store
-    path; anything else is a ValueError."""
+    path; malformed output is a PushError."""
 
     def test_map_form(self):
-        items = list(push.path_info_items({STORE: {"narSize": 1}}))
-        self.assertEqual(items, [(STORE, {"narSize": 1})])
+        data = {STORE: {"narSize": 1}}
+        with mock.patch.object(push, "nix_json", return_value=data) as nix_json:
+            self.assertEqual(push.path_infos([STORE]), data)
+        nix_json.assert_called_once_with(
+            "path-info", "--json", "--json-format", "1", "--", STORE)
 
     def test_bad_input_raises(self):
         for bad in ([{"path": STORE, "narSize": 1}], {STORE: "not a dict"},
                     "nope"):
-            with self.assertRaises(ValueError):
-                list(push.path_info_items(bad))
+            with mock.patch.object(push, "nix_json", return_value=bad), \
+                    self.assertRaises(push.PushError):
+                push.path_infos([STORE])
 
-    def test_store_scan_reuses_the_same_validation(self):
-        with mock.patch.object(push, "nix_json",
-                               return_value={STORE: {"narSize": 1}}):
-            self.assertEqual(push.store_scan_candidates(), [STORE])
-        with mock.patch.object(push, "nix_json", return_value="nope"):
-            with self.assertRaises(push.Fatal):
-                push.store_scan_candidates()
+    def test_all_paths_form(self):
+        data = {STORE: {"narSize": 1}}
+        with mock.patch.object(push, "nix_json", return_value=data) as nix_json:
+            self.assertEqual(push.path_infos(), data)
+        nix_json.assert_called_once_with(
+            "path-info", "--all", "--json", "--json-format", "1")
 
 
 class MergeIndexTest(unittest.TestCase):
@@ -279,29 +302,28 @@ class MergeIndexTest(unittest.TestCase):
         self.assertEqual(index["public_key"], "new-key")
 
     def test_dirty_existing_json_rejected(self):
-        """Corrupt existing index is Fatal, not silently empty.  `entries` is
-        validated here (the parse boundary) so filter_candidates need not;
-        a falsy entries normalizes to {} exactly as merge_index does."""
+        """A corrupt existing index fails instead of becoming an empty one."""
         for blob in (b"not json", b"null", b"[1, 2]", b"",
+                     b'{"entries": null}', b'{"entries": []}',
                      b'{"entries": [1, 2]}', b'{"entries": "x"}'):
-            with self.assertRaises(push.Fatal) as cm:
-                push.load_existing_index(blob)
+            with self.assertRaises(push.PushError) as cm:
+                push.parse_index(blob)
             self.assertEqual(str(cm.exception),
                              "failed to parse existing cache index")
 
     def test_absent_or_empty_entries_accepted(self):
-        for blob in (b'{}', b'{"entries": null}', b'{"entries": []}'):
-            self.assertIsInstance(push.load_existing_index(blob), dict)
+        for blob in (b'{}', b'{"entries": {}}'):
+            self.assertIsInstance(push.parse_index(blob), dict)
 
     def test_existing_index_loaded(self):
-        self.assertEqual(push.load_existing_index(b'{"public_key": "k"}'),
+        self.assertEqual(push.parse_index(b'{"public_key": "k"}'),
                          {"public_key": "k"})
 
 
 class SigningSetupTest(unittest.TestCase):
-    def test_signed_index_without_key_skips_round(self):
+    def test_signed_index_without_key_skips_push(self):
         with tempfile.TemporaryDirectory() as work_dir, \
-                self.assertRaises(push.SkipRound):
+                self.assertRaises(push.SkipPush):
             push.signing_setup("", {"public_key": "k:abc"}, work_dir)
 
     def test_falsy_public_key_is_unsigned(self):
@@ -309,7 +331,102 @@ class SigningSetupTest(unittest.TestCase):
             for index in ({}, {"public_key": None}, {"public_key": ""}):
                 self.assertEqual(
                     push.signing_setup("", index, work_dir),
-                    ("", ""))
+                    push.Signing())
+
+    def test_index_key_mismatch_fails(self):
+        converted = subprocess.CompletedProcess(
+            ["nix"], 0, stdout="new-key:public\n", stderr="")
+        with tempfile.TemporaryDirectory() as work_dir, \
+                mock.patch.object(push, "nix", return_value=converted), \
+                self.assertRaises(push.PushError) as cm:
+            push.signing_setup(
+                "new-key:secret", {"public_key": "old-key:public"},
+                work_dir)
+        self.assertIn("key rotation is not supported", str(cm.exception))
+
+
+class CollectCandidatesTest(unittest.TestCase):
+    def test_closure_failure_is_not_silently_ignored(self):
+        with mock.patch.object(push.os.path, "exists", return_value=True), \
+                mock.patch.object(
+                    push, "path_infos",
+                    side_effect=push.PushError("closure failed")):
+            with self.assertRaisesRegex(push.PushError, "closure failed"):
+                push.collect_candidates(STORE)
+
+
+class RunTest(unittest.TestCase):
+    def test_success_returns_summary_and_verifies_merged_index(self):
+        old_hash = "b" * 32
+        existing = {"entries": {old_hash: {"name": "old"}}}
+        new_entry = {"name": "pkg", "nar_size": 3}
+        registry = mock.Mock(spec=push.Registry)
+        registry.fetch_index.return_value = existing
+        registry.publish_index.return_value = "sha256:index"
+        config = push.Config("owner/repo", "token", "", STORE, "")
+
+        with mock.patch.object(push.Registry, "login",
+                               return_value=registry), \
+                mock.patch.object(push, "collect_candidates",
+                                  return_value=[STORE]), \
+                mock.patch.object(push, "load_path_infos", return_value={
+                    STORE: {"signatures": []},
+                }), \
+                mock.patch.object(push, "export_paths",
+                                  return_value=(2, {H32: new_entry})), \
+                mock.patch.object(push.time, "strftime", return_value="t"), \
+                mock.patch.object(sys, "stdout", io.StringIO()):
+            summary = push.run(config, "/tmp/work")
+
+        self.assertEqual(summary, push.Summary(uploaded=1, skipped=2, total=2))
+        index = registry.publish_index.call_args.args[0]
+        self.assertEqual(index["entries"], {old_hash: {"name": "old"},
+                                            H32: new_entry})
+        registry.verify.assert_called_once_with("sha256:index")
+
+
+class MainTest(unittest.TestCase):
+    def test_success_returns_zero_and_prints_summary(self):
+        err = io.StringIO()
+        with mock.patch.object(
+                push, "run", return_value=push.Summary(2, 1, 3)), \
+                mock.patch.object(sys, "stderr", err):
+            code = push.main({"NIXCACHE_REPO": "OWNER/REPO"})
+
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "::notice::nix/cache: uploaded 2, skipped 1, index entries 3",
+            err.getvalue())
+
+    def test_skip_is_warning_with_zero_exit(self):
+        err = io.StringIO()
+        with mock.patch.object(push, "run",
+                               side_effect=push.SkipPush("no permission")), \
+                mock.patch.object(sys, "stderr", err):
+            code = push.main({})
+
+        self.assertEqual(code, 0)
+        self.assertEqual(err.getvalue(), "::warning::no permission\n")
+
+    def test_push_error_is_error_with_nonzero_exit(self):
+        err = io.StringIO()
+        with mock.patch.object(push, "run",
+                               side_effect=push.PushError("broken")), \
+                mock.patch.object(sys, "stderr", err):
+            code = push.main({})
+
+        self.assertEqual(code, 1)
+        self.assertEqual(err.getvalue(), "::error::broken\n")
+
+    def test_os_error_is_error_with_nonzero_exit(self):
+        err = io.StringIO()
+        with mock.patch.object(push, "run",
+                               side_effect=OSError("disk full")), \
+                mock.patch.object(sys, "stderr", err):
+            code = push.main({})
+
+        self.assertEqual(code, 1)
+        self.assertEqual(err.getvalue(), "::error::disk full\n")
 
 
 class LayerDigestTest(unittest.TestCase):
@@ -318,29 +435,32 @@ class LayerDigestTest(unittest.TestCase):
             push.layer_digest(b'{"layers": [{"digest": "sha256:abc"}]}'),
             "sha256:abc")
 
-    def test_malformed_shapes_yield_empty(self):
+    def test_malformed_shapes_fail(self):
         for body in (b"", b"null", b"[]", b"{}", b'{"layers": []}',
                      b'{"layers": ["x"]}', b'{"layers": null}',
                      b'{"layers": [null]}'):
-            self.assertEqual(push.layer_digest(body), "")
+            with self.assertRaises(push.PushError):
+                push.layer_digest(body)
 
 
-class FailOrSkipTest(unittest.TestCase):
-    """401/403 -> SkipRound; anything else -> Fatal."""
+class HttpErrorTest(unittest.TestCase):
+    """401/403 skip the push; anything else fails it."""
 
-    def test_401_403_skip_round(self):
+    def test_401_403_skip_push(self):
         for code in (401, 403):
-            with self.assertRaises(push.SkipRound) as cm:
-                push.fail_or_skip(code, "blob upload failed for sha256:x")
+            with self.assertRaises(push.SkipPush) as cm:
+                push.raise_http_error(
+                    code, "blob upload failed for sha256:x")
             self.assertIn(
                 "blob upload failed for sha256:x "
                 "(HTTP %d: insufficient permission; fork PRs and "
                 "missing packages:* permissions are skipped)" % code,
                 str(cm.exception))
 
-    def test_other_code_fatal(self):
-        with self.assertRaises(push.Fatal) as cm:
-            push.fail_or_skip(500, "OCI manifest push failed (cache-index)")
+    def test_other_code_fails(self):
+        with self.assertRaises(push.PushError) as cm:
+            push.raise_http_error(
+                500, "OCI manifest push failed (cache-index)")
         self.assertEqual(
             str(cm.exception),
             "OCI manifest push failed (cache-index) (HTTP 500)")
@@ -353,7 +473,7 @@ class RegistryLoginTest(unittest.TestCase):
 
     def test_empty_token_fails_before_any_request(self):
         with mock.patch.object(push, "http_request") as http_request:
-            with self.assertRaises(push.Fatal) as cm:
+            with self.assertRaises(push.PushError) as cm:
                 push.Registry.login("o/r", "")
         self.assertIn("GITHUB_TOKEN is unset", str(cm.exception))
         http_request.assert_not_called()
@@ -361,16 +481,16 @@ class RegistryLoginTest(unittest.TestCase):
     def test_status_code_is_reported(self):
         with mock.patch.object(push, "http_request",
                                return_value=(403, [], b'{"errors":[]}')):
-            with self.assertRaises(push.Fatal) as cm:
+            with self.assertRaises(push.SkipPush) as cm:
                 push.Registry.login("o/r", "ghs_fake")
         self.assertIn("HTTP 403", str(cm.exception))
 
-    def test_200_without_token_field_reads_as_http_200(self):
+    def test_200_without_token_field_is_invalid(self):
         with mock.patch.object(push, "http_request",
                                return_value=(200, [], b'{"token": ""}')):
-            with self.assertRaises(push.Fatal) as cm:
+            with self.assertRaises(push.PushError) as cm:
                 push.Registry.login("o/r", "ghs_fake")
-        self.assertIn("HTTP 200", str(cm.exception))
+        self.assertEqual(str(cm.exception), "GHCR token response is invalid")
 
     def test_success_returns_the_registry_token(self):
         with mock.patch.object(push, "http_request",
@@ -413,11 +533,11 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(put.kwargs["body"], b"abc")
         self.assertEqual(put.kwargs["headers"]["Content-Length"], "3")
 
-    def test_malformed_existing_manifest_skips_instead_of_resetting_index(self):
+    def test_malformed_existing_manifest_fails_instead_of_resetting_index(self):
         registry = push.Registry("o/r", "secret")
         with mock.patch.object(push.Registry, "fetch_manifest",
                                return_value=(200, b'{"layers": []}')), \
-                self.assertRaises(push.SkipRound):
+                self.assertRaises(push.PushError):
             registry.fetch_index()
 
     def test_publish_index_builds_config_and_layer_in_memory(self):
@@ -713,30 +833,34 @@ class FileHashEquivalenceTest(unittest.TestCase):
 
 
 class CompressStreamTest(unittest.TestCase):
-    """Compression used by dump_nar: zstd on Python >= 3.14, xz fallback."""
+    """dump_nar prefers stdlib zstd and falls back to xz."""
 
     def _data(self):
         return b"hello world\n" * 100000
+
+    def test_format_selection_matches_runtime(self):
+        expected = (("zstd", "zst") if push._ZstdCompressor is not None
+                    else ("xz", "xz"))
+        self.assertEqual((push.COMPRESSION, push.COMPRESSION_EXT), expected)
 
     def test_active_path_round_trip(self):
         out = io.BytesIO()
         push._compress_stream(io.BytesIO(self._data()), out)
         if push.COMPRESSION == "zstd":
-            import compression.zstd as z
-            dec = z.ZstdDecompressor().decompress(out.getvalue())
+            from compression.zstd import ZstdDecompressor
+            data = ZstdDecompressor().decompress(out.getvalue())
         else:
-            dec = lzma.decompress(out.getvalue())
-        self.assertEqual(dec, self._data())
+            data = lzma.decompress(out.getvalue())
+        self.assertEqual(data, self._data())
 
     def test_active_path_magic(self):
         out = io.BytesIO()
         push._compress_stream(io.BytesIO(b"abc"), out)
-        if push.COMPRESSION == "zstd":
-            self.assertEqual(out.getvalue()[:4], b"\x28\xb5\x2f\xfd")
-        else:
-            self.assertEqual(out.getvalue()[:6], b"\xfd7zXZ\x00")
+        magic = (b"\x28\xb5\x2f\xfd" if push.COMPRESSION == "zstd"
+                 else b"\xfd7zXZ\x00")
+        self.assertTrue(out.getvalue().startswith(magic))
 
-    def test_xz_fallback_selected_when_zstd_unavailable(self):
+    def test_xz_fallback(self):
         out = io.BytesIO()
         with mock.patch.object(push, "_ZstdCompressor", None):
             push._compress_stream(io.BytesIO(self._data()), out)
