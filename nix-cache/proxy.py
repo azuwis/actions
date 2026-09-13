@@ -227,8 +227,17 @@ def get_nci_response() -> bytes:
 
 
 class CacheHandler(http.server.BaseHTTPRequestHandler):
+    # Nix probes a cache with HEAD (HttpBinaryCacheStore::fileExists) and
+    # treats anything but 404/403 as a hard error, so HEAD must answer like GET
+    # with the body suppressed. An instance serves one HTTP/1.0 request.
+    _head_only = False
+
     def log_message(self, format, *args):
         sys.stderr.write(f"[nixcache-proxy] {args[0]}\n")
+
+    def do_HEAD(self):
+        self._head_only = True
+        self.do_GET()
 
     def do_GET(self):
         path = self.path.rstrip("/")
@@ -257,7 +266,8 @@ class CacheHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        if not self._head_only:
+            self.wfile.write(data)
 
     def _stream_response(self, resp, content_length: int | None, content_type: str):
         """Stream an upstream response directly to the client."""
@@ -266,6 +276,8 @@ class CacheHandler(http.server.BaseHTTPRequestHandler):
         if content_length is not None:
             self.send_header("Content-Length", str(content_length))
         self.end_headers()
+        if self._head_only:
+            return
         while True:
             chunk = resp.read(STREAM_CHUNK_SIZE)
             if not chunk:
