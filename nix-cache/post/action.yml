@@ -1,7 +1,7 @@
 name: Use GHCR as nix substituter (post actions)
 inputs:
   paths:
-    description: Whitespace-separated store paths whose closures are pushed, empty = scan the whole store for paths with no external signature
+    description: Whitespace-separated store paths whose closures are pushed, empty = scan the whole store for paths with no external signature, skipping derivations
     default: ""
   signing_key:
     description: Cache signing key contents (name:base64), required if the cache index is signed, leave empty for unsigned mode

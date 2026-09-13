@@ -559,9 +559,15 @@ def load_path_infos(paths, *, recursive=False, batch_size=STD_BATCH) -> dict:
 
 
 def collect_path_infos(paths_input: str) -> dict:
-    """Path info for an explicit closure, or for the whole store."""
+    """Path info for an explicit closure, or for the whole store.
+
+    A whole-store scan drops derivations: they are most of the store (and of
+    the index, one narinfo each) and caching them buys nothing, since a
+    narinfo miss just falls back to building.  A path named explicitly is
+    uploaded as asked."""
     if not paths_input:
-        return path_infos()
+        return {path: info for path, info in path_infos().items()
+                if not path.endswith(".drv")}
     candidates = []
     for p in paths_input.split():
         if not STORE_PATH_RE.match(p):
