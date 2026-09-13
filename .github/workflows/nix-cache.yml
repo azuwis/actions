@@ -33,25 +33,19 @@ jobs:
       - name: Build test leaf
         id: build
         run: |
-          mkdir -p "$RUNNER_TEMP/ci-flake"
-          cat > "$RUNNER_TEMP/ci-flake/flake.nix" <<EOF
-          {
-            # pin the rev: a moving branch drifts between runs, so the leaf is not reproducible
-            inputs.nixpkgs.url = "github:NixOS/nixpkgs?rev=5dfba6236110080a54247d6460bc2ff5dda939cc";
-            outputs = { self, nixpkgs }: {
-              packages.x86_64-linux.cache-test = nixpkgs.legacyPackages.x86_64-linux.stdenv.mkDerivation {
-                pname = "cache-test";
-                # unique version per run/attempt -> unique leaf, so the index assertion proves
-                # this run really pushed (see the 307 redirect fix in push.py for the false-pass)
-                version = "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT";
-                buildCommand = "mkdir -p \$out && echo hello > \$out/hello";
-              };
-            };
+          mkdir -p "$RUNNER_TEMP/ci-nix"
+          cat > "$RUNNER_TEMP/ci-nix/default.nix" <<EOF
+          with import <nixpkgs> {};
+          stdenv.mkDerivation {
+            pname = "cache-test";
+            # unique version per run/attempt -> unique leaf, so the index assertion proves
+            # this run really pushed (see the 307 redirect fix in push.py for the false-pass)
+            version = "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT";
+            buildCommand = "mkdir -p \$out && echo hello > \$out/hello";
           }
           EOF
-          cd "$RUNNER_TEMP/ci-flake"
-          # stdout carries only the out-path (plan info goes to stderr); no pipe, no pipefail
-          echo "leaf=$(nix build .#cache-test --no-link --print-out-paths)" >> "$GITHUB_OUTPUT"
+          leaf="$(nix-build "$RUNNER_TEMP/ci-nix" --no-out-link)"
+          echo "leaf=$leaf" >> "$GITHUB_OUTPUT"
       - uses: ./nix-cache/post
         with:
           paths: ${{ steps.build.outputs.leaf }}
