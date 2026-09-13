@@ -587,7 +587,9 @@ def export_one(path: str, hash_prefix: str, info: dict, registry: Registry,
     try:
         narinfo = make_narinfo(path, hash_prefix, size,
                                nix_hash_convert(nar_digest), info)
-    except (PushError, AttributeError, TypeError, ValueError) as e:
+    except (AttributeError, TypeError, ValueError) as e:
+        # malformed path info: skip this path.  A `nix` failure is not in
+        # here on purpose -- it stays fatal, see nix().
         raise SkipPath(
             f"narinfo generation failed for {path}: {e}") from None
     registry.push_blob(nar_file, nar_digest)
