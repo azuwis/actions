@@ -43,6 +43,7 @@ CLOSURE_BATCH = 64                  # closure expansion batch size (ARG_MAX)
 STD_BATCH = 128                     # path-info / signing batch size (ARG_MAX)
 READBACK_TRIES = 30
 READBACK_SLEEP = 2
+PUBLISH_TRIES = 3                   # merge+republish rounds against a racing push
 REDIRECT_STATUSES = (301, 302, 303, 307, 308)
 MAX_REDIRECTS = 5
 
@@ -371,20 +372,23 @@ class Registry:
                           json.dumps(manifest, separators=(",", ":")))
         return layer["digest"]
 
-    def verify(self, index_digest: str) -> None:
+    def verify(self, index_digest: str) -> bool:
+        """Wait for the cache-index tag to serve `index_digest`.
+
+        False means the tag kept serving a different index, i.e. a concurrent
+        push published after us; the caller re-merges rather than failing."""
         for _ in range(READBACK_TRIES):
             status, body = self.fetch_manifest("cache-index")
             if status == 200:
                 try:
                     if layer_digest(body) == index_digest:
-                        return
+                        return True
                 except PushError:
                     pass
             elif status in (401, 403):
                 raise_http_error(status, "cache-index readback failed")
             time.sleep(READBACK_SLEEP)
-        raise PushError("cache-index manifest readback did not confirm the "
-                        "new index (blobs uploaded, index not visible yet)")
+        return False
 
 
 # ------------------------------------------------------------------ export
@@ -500,6 +504,27 @@ def merge_index(existing: dict, new_entries: dict, pubkey: str,
     }
 
 
+def publish_cache_index(registry: Registry, new_entries: dict, pubkey: str,
+                        repo: str, generated: str) -> dict:
+    """Merge `new_entries` into the current index and publish it.
+
+    The tag is one mutable OCI manifest and GHCR has no compare-and-swap, so
+    merging the index read at the *start* of the run would silently drop
+    whatever another push published while this one was exporting paths.
+    Re-fetching here shrinks that read-modify-write window from minutes to
+    milliseconds, and losing the tag to a racer costs a retry, not a job."""
+    for _ in range(PUBLISH_TRIES):
+        index = merge_index(registry.fetch_index(), new_entries, pubkey, repo,
+                            generated)
+        if registry.verify(registry.publish_index(index)):
+            return index
+        warn("cache-index was republished by another push while this one was "
+             "uploading; re-merging and publishing again")
+    raise PushError("cache-index readback never confirmed the merged index "
+                    f"({PUBLISH_TRIES} attempts; blobs uploaded, a concurrent "
+                    "push keeps winning the tag)")
+
+
 # --------------------------------------------------------------------- flow
 
 
@@ -604,6 +629,8 @@ def export_paths(paths, info_by_path: dict, registry: Registry,
 
 def run(config: Config, work_dir: str) -> None:
     registry = Registry.login(config.repo, config.github_token)
+    # Snapshot for the selection/signing decisions below only; the index is
+    # re-read at publish time so concurrent pushes cannot lose entries here.
     existing = registry.fetch_index()
     public_key = signing_setup(config.signing_key, existing, work_dir)
     info_by_path = collect_path_infos(config.paths)
@@ -625,11 +652,10 @@ def run(config: Config, work_dir: str) -> None:
     if not new_entries:
         print("Nothing new to upload")
         return
-    index = merge_index(existing, new_entries, public_key, config.repo,
-                        generated)
+    index = publish_cache_index(registry, new_entries, public_key,
+                                config.repo, generated)
     print(f"index: {len(index['entries'])} total entries "
           f"({len(new_entries)} new)")
-    registry.verify(registry.publish_index(index))
     print(f"::notice::nix-cache: uploaded {len(new_entries)}, "
           f"skipped {skipped}, index entries {len(index['entries'])}",
           file=sys.stderr)
