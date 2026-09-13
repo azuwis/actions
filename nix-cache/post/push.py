@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Push locally built Nix store paths to a GHCR OCI binary cache.
 
-NIXCACHE_REPO comes from nix-cache via GITHUB_ENV. NIXCACHE_SIGNING_KEY and
-NIXCACHE_PATHS are action inputs. GITHUB_TOKEN is passed by the action (not
-a default env var).
+NIXCACHE_REPO and NIXCACHE_PUBLIC_KEY come from nix-cache via GITHUB_ENV.
+NIXCACHE_SIGNING_KEY and NIXCACHE_PATHS are action inputs. GITHUB_TOKEN is
+passed by the action (not a default env var).
 """
 import base64
 import contextlib
@@ -69,6 +69,7 @@ class Config:
     signing_key: str
     paths: str
     runner_temp: str
+    public_key: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -78,6 +79,7 @@ class Config:
             signing_key=os.environ.get("NIXCACHE_SIGNING_KEY", ""),
             paths=os.environ.get("NIXCACHE_PATHS", ""),
             runner_temp=os.environ.get("RUNNER_TEMP", ""),
+            public_key=os.environ.get("NIXCACHE_PUBLIC_KEY", ""),
         )
 
 
@@ -528,14 +530,24 @@ def publish_cache_index(registry: Registry, new_entries: dict, pubkey: str,
 # --------------------------------------------------------------------- flow
 
 
-def signing_setup(signing_key: str, index: dict, work_dir: str) -> str:
-    """Prepare and validate the optional cache signing key."""
+def signing_setup(signing_key: str, public_key: str, index: dict,
+                  work_dir: str) -> str:
+    """Prepare and validate the optional cache signing key.
+
+    `public_key` is what the nix-cache action told Nix to trust, so the push
+    has to produce entries that key can verify -- otherwise Nix silently
+    ignores every path from a cache that looks correctly configured."""
     idx_pubkey = str(index.get("public_key") or "")
     if not signing_key:
         if idx_pubkey:
             raise SkipPush("cache index is signed but no signing_key "
                            "provided; skipping upload (refusing unsigned "
                            "entries)")
+        if public_key:
+            raise PushError(
+                "nix-cache got a public_key but this push has no signing_key: "
+                "entries would be unsigned and Nix would reject every path "
+                "from the cache")
         return ""
     key_file = os.path.join(work_dir, "signing.key")
     with open(key_file, "w") as f:
@@ -545,6 +557,10 @@ def signing_setup(signing_key: str, index: dict, work_dir: str) -> str:
                   input_text=signing_key).stdout.strip()
     if not own_key:
         raise PushError("cannot derive public key from signing_key")
+    if public_key and own_key != public_key.strip():
+        raise PushError("nix-cache public_key differs from the provided "
+                        "signing key; entries would be signed with a key Nix "
+                        "does not trust")
     if idx_pubkey and idx_pubkey != own_key:
         raise PushError("index public_key differs from provided signing key "
                         "(key rotation is not supported)")
@@ -640,7 +656,8 @@ def run(config: Config, work_dir: str) -> None:
     # Snapshot for the selection/signing decisions below only; the index is
     # re-read at publish time so concurrent pushes cannot lose entries here.
     existing = registry.fetch_index()
-    public_key = signing_setup(config.signing_key, existing, work_dir)
+    public_key = signing_setup(config.signing_key, config.public_key,
+                               existing, work_dir)
     info_by_path = collect_path_infos(config.paths)
     paths = list(info_by_path)
     if not paths:

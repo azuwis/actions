@@ -4,7 +4,7 @@ inputs:
     description: Whitespace-separated store paths whose closures are pushed, empty = scan the whole store for paths with no external signature, skipping derivations
     default: ""
   signing_key:
-    description: Cache signing key contents (name:base64), required if the cache index is signed, leave empty for unsigned mode
+    description: Cache signing key contents (name:base64), required when nix-cache is given a public_key or the index is already signed, leave empty for unsigned mode
     default: ""
 runs:
   using: composite

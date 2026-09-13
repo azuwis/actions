@@ -7,6 +7,7 @@ NIXCACHE_REPO="$(printf '%s' "$NIXCACHE_REPO" | tr '[:upper:]' '[:lower:]')"
 cat <<EOF >>"$GITHUB_ENV"
 NIXCACHE_REPO=$NIXCACHE_REPO
 NIXCACHE_PORT=$NIXCACHE_PORT
+NIXCACHE_PUBLIC_KEY=$NIXCACHE_PUBLIC_KEY
 EOF
 
 index_dir="$RUNNER_TEMP/nix-cache-proxy"
