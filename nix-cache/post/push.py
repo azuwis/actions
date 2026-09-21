@@ -137,13 +137,28 @@ def nix_hash_convert(h: str) -> str:
     return nix("hash", "convert", "--to", "base32", h).stdout.strip()
 
 
+JSON_FORMAT = None                 # probed once; --json-format exists since Nix 2.33
+
+
+def nix_has_json_format() -> bool:
+    """Whether this Nix takes `--json-format` (older Nix prints format 1 anyway)."""
+    global JSON_FORMAT
+    if JSON_FORMAT is None:
+        help_text = subprocess.run(["nix", "path-info", "--help"],
+                                   capture_output=True, text=True).stdout
+        JSON_FORMAT = "--json-format" in help_text
+    return JSON_FORMAT
+
+
 def path_infos(paths=None, recursive=False) -> dict:
     args = ["path-info"]
     if recursive:
         args.append("--recursive")
     if paths is None:
         args.append("--all")
-    args += ["--json", "--json-format", "1"]
+    args.append("--json")
+    if nix_has_json_format():
+        args += ["--json-format", "1"]
     if paths is not None:
         args += ["--", *paths]
     data = nix_json(*args)
