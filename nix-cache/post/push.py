@@ -312,6 +312,7 @@ class Registry:
         status, _, body = self.request(
             "GET", f"manifests/{tag}",
             headers={"Accept": MANIFEST_MEDIA_TYPE}, timeout=30.0,
+            retries=MAX_RETRIES,
         )
         return status, body if status == 200 else b""
 
@@ -335,7 +336,7 @@ class Registry:
             raise_http_error(status, "failed to fetch cache-index manifest")
         digest = layer_digest(manifest)
         status, _, data = self.request(
-            "GET", f"blobs/{digest}", timeout=120.0)
+            "GET", f"blobs/{digest}", timeout=120.0, retries=MAX_RETRIES)
         if status != 200:
             raise_http_error(status, "failed to download cache-index blob")
         return parse_index(data)
@@ -350,7 +351,7 @@ class Registry:
             size = len(source)
             digest = digest or "sha256:" + hashlib.sha256(source).hexdigest()
         status, _, _ = self.request(
-            "HEAD", f"blobs/{digest}", timeout=30.0)
+            "HEAD", f"blobs/{digest}", timeout=30.0, retries=MAX_RETRIES)
         if status == 200:
             return digest
         status, headers, _ = self.request(
