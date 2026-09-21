@@ -217,7 +217,7 @@ def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
                     or hops >= MAX_REDIRECTS):
                 break
             new_url = urllib.parse.urljoin(current_url, location)
-            if urllib.parse.urlsplit(new_url).hostname != parts.hostname:
+            if url_origin(new_url) != url_origin(current_url):
                 current_headers = {
                     k: v for k, v in current_headers.items()
                     if k.lower() != "authorization"
@@ -227,6 +227,13 @@ def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
         if not retryable or attempt == retries:
             return status, hdrs, data
         time.sleep(RETRY_DELAY)
+
+
+def url_origin(url: str) -> tuple:
+    """(scheme, host, port) with the scheme's default port filled in."""
+    parts = urllib.parse.urlsplit(url)
+    return (parts.scheme, parts.hostname,
+            parts.port or (443 if parts.scheme == "https" else 80))
 
 
 def build_put_url(location: str, digest: str) -> str:
@@ -288,7 +295,7 @@ class Registry:
     def request(self, method: str, target: str, *, headers=None, **kwargs):
         url = target if "://" in target else self.url(target)
         request_headers = dict(headers or {})
-        if urllib.parse.urlsplit(url).hostname == REGISTRY:
+        if url_origin(url) == ("https", REGISTRY, 443):
             request_headers["Authorization"] = f"Bearer {self.token}"
         else:
             request_headers = {
