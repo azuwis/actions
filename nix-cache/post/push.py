@@ -39,8 +39,7 @@ COMPRESSION, COMPRESSION_EXT = (
 MAX_NAR_SIZE = 10737418240          # 10 GiB GHCR layer limit
 MAX_RETRIES = 3
 RETRY_DELAY = 2
-CLOSURE_BATCH = 64                  # closure expansion batch size (ARG_MAX)
-STD_BATCH = 128                     # path-info / signing batch size (ARG_MAX)
+BATCH = 128                         # path-info / signing batch size (ARG_MAX)
 READBACK_TRIES = 30
 READBACK_SLEEP = 2
 PUBLISH_TRIES = 3                   # merge+republish rounds against a racing push
@@ -111,13 +110,6 @@ def log_group(name: str):
         print("::endgroup::", file=sys.stderr)
 
 
-def header_value(headers, name: str) -> str:
-    for k, v in headers or []:
-        if k.lower() == name.lower():
-            return v
-    return ""
-
-
 # --------------------------------------------------------------------- nix
 
 def nix(*args, input_text: str = None) -> subprocess.CompletedProcess:
@@ -162,7 +154,7 @@ def path_infos(paths=None, recursive=False) -> dict:
 
 
 def sign_paths(key_file: str, paths) -> None:
-    for batch in chunks(paths, STD_BATCH):
+    for batch in chunks(paths, BATCH):
         nix("store", "sign", "--key-file", key_file, *batch)
 
 
@@ -198,12 +190,13 @@ def http_request(method, url, headers=None, body=None, timeout=30.0, retries=0):
             try:
                 conn.request(method, path, body=body, headers=current_headers)
                 resp = conn.getresponse()
-                status, hdrs, data = resp.status, resp.getheaders(), resp.read()
+                status, data = resp.status, resp.read()
+                hdrs = {k.lower(): v for k, v in resp.getheaders()}
             except (OSError, http.client.HTTPException):
-                status, hdrs, data = 0, [], b""
+                status, hdrs, data = 0, {}, b""
             finally:
                 conn.close()
-            location = header_value(hdrs, "Location")
+            location = hdrs.get("location", "")
             follows = method in ("GET", "HEAD") or status in (307, 308)
             if (status not in REDIRECT_STATUSES or not location or not follows
                     or hops >= MAX_REDIRECTS):
@@ -343,7 +336,7 @@ class Registry:
             retries=MAX_RETRIES)
         if status != 202:
             raise_http_error(status, "failed to initiate blob upload")
-        location = header_value(headers, "Location")
+        location = headers.get("location", "")
         if not location:
             raise PushError("no upload location returned by registry")
         source_context = (open(source, "rb") if is_file
@@ -493,21 +486,16 @@ def parse_index(data) -> dict:
 
 
 def merge_index(existing: dict, new_entries: dict, pubkey: str,
-                repo: str, generated: str) -> dict:
+                generated: str) -> dict:
     return {
-        "version": 1,
-        "repo": repo,
-        "registry": REGISTRY,
-        "image": f"{REGISTRY}/{repo}/nix-cache",
         "generated": generated,
         "public_key": pubkey or existing.get("public_key", ""),
         "entries": {**(existing.get("entries") or {}), **new_entries},
-        "gc_roots": [],
     }
 
 
 def publish_cache_index(registry: Registry, new_entries: dict, pubkey: str,
-                        repo: str, generated: str) -> dict:
+                        generated: str) -> dict:
     """Merge `new_entries` into the current index and publish it.
 
     The tag is one mutable OCI manifest and GHCR has no compare-and-swap, so
@@ -516,7 +504,7 @@ def publish_cache_index(registry: Registry, new_entries: dict, pubkey: str,
     Re-fetching here shrinks that read-modify-write window from minutes to
     milliseconds, and losing the tag to a racer costs a retry, not a job."""
     for _ in range(PUBLISH_TRIES):
-        index = merge_index(registry.fetch_index(), new_entries, pubkey, repo,
+        index = merge_index(registry.fetch_index(), new_entries, pubkey,
                             generated)
         if registry.verify(registry.publish_index(index)):
             return index
@@ -567,9 +555,9 @@ def signing_setup(signing_key: str, public_key: str, index: dict,
     return own_key
 
 
-def load_path_infos(paths, *, recursive=False, batch_size=STD_BATCH) -> dict:
+def load_path_infos(paths, *, recursive=False) -> dict:
     infos = {}
-    for batch in chunks(paths, batch_size):
+    for batch in chunks(paths, BATCH):
         infos.update(path_infos(batch, recursive=recursive))
     return infos
 
@@ -592,13 +580,12 @@ def collect_path_infos(paths_input: str) -> dict:
             candidates.append(p)
         else:
             warn(f"store path not found: {p}; skipping")
-    infos = load_path_infos(candidates, recursive=True,
-                            batch_size=CLOSURE_BATCH)
+    infos = load_path_infos(candidates, recursive=True)
     return dict(sorted(infos.items()))
 
 
 def export_one(path: str, hash_prefix: str, info: dict, registry: Registry,
-               nar_file: str, generated: str) -> dict:
+               nar_file: str) -> dict:
     """Export and upload one path, returning its index entry."""
     dump_nar(path, nar_file)
     size = os.path.getsize(nar_file)
@@ -615,17 +602,12 @@ def export_one(path: str, hash_prefix: str, info: dict, registry: Registry,
         raise SkipPath(
             f"narinfo generation failed for {path}: {e}") from None
     registry.push_blob(nar_file, nar_digest)
-    return {
-        "name": os.path.basename(path).split("-", 1)[-1],
-        "narinfo": narinfo,
-        "nar_digest": nar_digest,
-        "nar_size": size,
-        "added": generated,
-    }
+    print(f"uploaded {hash_prefix} ({size} bytes)", file=sys.stderr)
+    return {"narinfo": narinfo, "nar_digest": nar_digest}
 
 
 def export_paths(paths, info_by_path: dict, registry: Registry,
-                 cache_dir: str, generated: str) -> tuple:
+                 cache_dir: str) -> tuple:
     """Export paths, returning (skipped, new_entries for the index merge)."""
     nar_dir = os.path.join(cache_dir, "nar")
     os.makedirs(nar_dir, exist_ok=True)
@@ -637,11 +619,8 @@ def export_paths(paths, info_by_path: dict, registry: Registry,
         nar_file = os.path.join(nar_dir, f"{hash_prefix}.nar.{COMPRESSION_EXT}")
         with log_group(f"nix-cache export {hash_prefix}"):
             try:
-                entry = export_one(path, hash_prefix, info, registry,
-                                   nar_file, generated)
-                new_entries[hash_prefix] = entry
-                print(f"uploaded {hash_prefix} ({entry['nar_size']} bytes)",
-                      file=sys.stderr)
+                new_entries[hash_prefix] = export_one(
+                    path, hash_prefix, info, registry, nar_file)
             except SkipPath as e:
                 warn(f"{e}; skipping")
                 skipped += 1
@@ -672,13 +651,11 @@ def run(config: Config, work_dir: str) -> None:
         print("Nothing to upload")
         return
     generated = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    skipped, new_entries = export_paths(
-        keep, info_by_path, registry, work_dir, generated)
+    skipped, new_entries = export_paths(keep, info_by_path, registry, work_dir)
     if not new_entries:
         print("Nothing new to upload")
         return
-    index = publish_cache_index(registry, new_entries, public_key,
-                                config.repo, generated)
+    index = publish_cache_index(registry, new_entries, public_key, generated)
     print(f"index: {len(index['entries'])} total entries "
           f"({len(new_entries)} new)")
     print(f"::notice::nix-cache: uploaded {len(new_entries)}, "
