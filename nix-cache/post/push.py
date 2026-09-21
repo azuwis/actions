@@ -426,6 +426,7 @@ def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
     refs = info.get("references", []) or []
     deriver = info.get("deriver", "")
     sigs = info.get("signatures", info.get("sigs", [])) or []
+    ca = info.get("ca") or ""
 
     lines = [
         f"StorePath: {store_path}",
@@ -441,6 +442,9 @@ def make_narinfo(store_path: str, hash_prefix: str, file_size: int,
     if deriver:
         lines.append(f"Deriver: {os.path.basename(deriver)}")
     lines.extend(f"Sig: {sig}" for sig in sigs)
+    if ca:
+        # clients register the path input-addressed without this
+        lines.append(f"CA: {ca}")
 
     return "\n".join(lines) + "\n"
 
