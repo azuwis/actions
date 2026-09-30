@@ -112,8 +112,10 @@ jobs:
           PR="${PR%% *}"
 
           generate_logs() {
+            shopt -s nullglob
             reports=(report-*-linux/*/report.json)
             reports+=(report-*-darwin/*/report.json)
+            shopt -u nullglob
             for report in "${reports[@]}"; do
               system=$(jq -r '.systems[0]' "$report")
               mapfile -t packages < <(jq -r '.result | .[].failed | .[]' "$report")
@@ -147,8 +149,10 @@ jobs:
           }
 
           generate_summary() {
+            shopt -s nullglob
             reports=(report-*-linux/*/report.md)
             reports+=(report-*-darwin/*/report.md)
+            shopt -u nullglob
             cat "${reports[0]}"
             sed -s -n -e '/---/,$p' -e '1i\
           ' "${reports[@]:1}" 2>/dev/null
