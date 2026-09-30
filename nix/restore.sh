@@ -93,11 +93,7 @@ post() {
     echo "Start nix-daemon"
     case "$RUNNER_OS" in
     Linux) sudo systemctl start nix-daemon ;;
-    macOS)
-      echo "Enable 'sandbox = relaxed' on macOS, so preinstalled apps will not affect builds"
-      echo "sandbox = relaxed" | sudo tee -a /etc/nix/nix.conf
-      sudo launchctl load -w /Library/LaunchDaemons/org.nixos.nix-daemon.plist
-      ;;
+    macOS) sudo launchctl load -w /Library/LaunchDaemons/org.nixos.nix-daemon.plist ;;
     esac
 
     probe_path=$(readlink -f "$(command -v nix)")

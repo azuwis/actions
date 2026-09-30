@@ -48,18 +48,21 @@ runs:
       if: ${{ inputs.install_action == 'nixbuild' }}
       with:
         nix_conf: |
+          ${{ runner.os == 'macOS' && 'sandbox = relaxed' || '' }}
           ${{ inputs.nix_conf }}
           ${{ inputs.extra_nix_conf }}
     - uses: NixOS/nix-installer-action@62c1943b776c509394b550f3f983adc14e9212d6 # v1.0.0
       if: ${{ inputs.install_action == 'nixos' }}
       with:
         extra-conf: |
+          ${{ runner.os == 'macOS' && 'sandbox = relaxed' || '' }}
           ${{ inputs.nix_conf }}
           ${{ inputs.extra_nix_conf }}
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
       if: ${{ inputs.install_action == 'cachix' }}
       with:
         extra_nix_config: |
+          ${{ runner.os == 'macOS' && 'sandbox = relaxed' || '' }}
           ${{ inputs.nix_conf }}
           ${{ inputs.extra_nix_conf }}
     - name: Nix restore pre
