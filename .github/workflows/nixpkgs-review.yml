@@ -29,6 +29,9 @@ on:
           - cachix
           - nixbuild
         default: cachix
+      extra_nix_conf:
+        type: string
+        default: ""
       btrfs:
         description: Clean up disk and enable BTRFS RAID0 on Linux to get max disk space
         type: boolean
@@ -61,6 +64,7 @@ jobs:
         with:
           key: nixpkgs-review
           install_action: ${{ inputs.install_action }}
+          extra_nix_conf: ${{ inputs.extra_nix_conf }}
           clean: ${{ inputs.btrfs }}
           btrfs: ${{ inputs.btrfs }}
       - name: Install tools
