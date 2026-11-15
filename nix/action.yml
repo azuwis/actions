@@ -21,8 +21,8 @@ inputs:
     description: Use nixpkgs defined in flake.nix
     default: true
   nixpkgs_url:
-    description: Nixpkgs URL
-    default: https://nixos.org/channels/nixos-26.05
+    description: Nixpkgs URL, or a release version in `YY.MM` form which expands to https://channels.nixos.org/nixos-YY.MM, or https://channels.nixos.org/nixpkgs-YY.MM-darwin on macOS. Empty skips nix-channel setup
+    default: "26.05"
   clean:
     description: Clean up disk space
     default: false
@@ -88,7 +88,7 @@ runs:
       shell: bash
       env:
         USE_NIXPKGS_IN_FLAKE: ${{ inputs.use_nixpkgs_in_flake }}
-        NIXPKGS_URL: ${{ inputs.nixpkgs_url }}
+        NIXPKGS_URL: ${{ !contains(inputs.nixpkgs_url, '/') && contains(inputs.nixpkgs_url, '.') && format(runner.os == 'macOS' && 'https://channels.nixos.org/nixpkgs-{0}-darwin' || 'https://channels.nixos.org/nixos-{0}', inputs.nixpkgs_url) || inputs.nixpkgs_url }}
       run: exec ${{ github.action_path }}/restore.sh post
     - name: Debug
       if: ${{ inputs.debug == true || inputs.debug == 'true' || inputs.debug == 'nopause' }}
