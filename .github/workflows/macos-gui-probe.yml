@@ -1,0 +1,241 @@
+name: macOS GUI probe
+# Answers one question: can a hosted arm64 macOS runner capture a screen after
+# creating a virtual display? The runner image pre-grants kTCCServiceScreenCapture
+# to /bin/bash and the runner agent, so TCC is expected to pass, and the missing
+# piece is the display device. See configure-tccdb-macos.sh in actions/runner-images.
+on:
+  # workflow_dispatch is only registered from the default branch, so pushes to
+  # this branch are what starts the probe while it is not on main yet.
+  push:
+    branches:
+      - macos-gui-probe
+  workflow_dispatch:
+concurrency:
+  group: macos-gui-probe
+  cancel-in-progress: false
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Runner info
+        run: |
+          sw_vers
+          uname -m
+          echo "user: $(id -un)"
+          echo "console user: $(stat -f%Su /dev/console)"
+          echo "--- displays before"
+          system_profiler SPDisplaysDataType | head -30
+      - name: Capture before
+        run: |
+          mkdir -p out
+          screencapture -x out/before.png && rc=0 || rc=$?
+          echo "screencapture rc=$rc"
+          ls -l out/before.png 2>/dev/null || true
+          sips -g pixelWidth -g pixelHeight out/before.png 2>/dev/null || true
+      - name: Create virtual display
+        run: |
+          mkdir -p out
+          cat > out/vdisplay.m <<'OBJC'
+          #import <Foundation/Foundation.h>
+          #import <CoreGraphics/CoreGraphics.h>
+          #import <unistd.h>
+          #import <objc/runtime.h>
+
+          // CGVirtualDisplay is a private CoreGraphics API. The classes are not in
+          // the public SDK, so they are declared here and resolved at runtime.
+          @interface CGVirtualDisplayMode : NSObject
+          - (instancetype)initWithWidth:(unsigned int)width height:(unsigned int)height refreshRate:(double)refreshRate;
+          @end
+
+          @interface CGVirtualDisplayDescriptor : NSObject
+          @property (nonatomic, copy) NSString *name;
+          @property (nonatomic) unsigned int maxPixelsWide;
+          @property (nonatomic) unsigned int maxPixelsHigh;
+          @property (nonatomic) CGSize sizeInMillimeters;
+          @property (nonatomic) unsigned int vendorID;
+          @property (nonatomic) unsigned int productID;
+          @property (nonatomic) unsigned int serialNum;
+          @property (nonatomic, strong) dispatch_queue_t queue;
+          @end
+
+          @interface CGVirtualDisplaySettings : NSObject
+          @property (nonatomic) unsigned int hiDPI;
+          @property (nonatomic, strong) NSArray *modes;
+          @end
+
+          @interface CGVirtualDisplay : NSObject
+          - (instancetype)initWithDescriptor:(CGVirtualDisplayDescriptor *)descriptor;
+          - (BOOL)applySettings:(CGVirtualDisplaySettings *)settings;
+          @property (nonatomic, readonly) unsigned int displayID;
+          @end
+
+          int main(int argc, const char *argv[]) {
+            @autoreleasepool {
+              if (!NSClassFromString(@"CGVirtualDisplay")) {
+                fprintf(stderr, "CGVirtualDisplay is not available\n");
+                return 1;
+              }
+
+              CGVirtualDisplayDescriptor *descriptor = [[CGVirtualDisplayDescriptor alloc] init];
+              descriptor.name = @"CI Virtual Display";
+              descriptor.maxPixelsWide = 1920;
+              descriptor.maxPixelsHigh = 1080;
+              descriptor.sizeInMillimeters = CGSizeMake(530, 300);
+              descriptor.vendorID = 0x1234;
+              descriptor.productID = 0x5678;
+              descriptor.serialNum = (unsigned int)getpid();
+              descriptor.queue = dispatch_get_main_queue();
+
+              CGVirtualDisplay *display = [[CGVirtualDisplay alloc] initWithDescriptor:descriptor];
+              if (!display) {
+                fprintf(stderr, "initWithDescriptor returned nil\n");
+                return 1;
+              }
+
+              CGVirtualDisplayMode *mode = [[CGVirtualDisplayMode alloc] initWithWidth:1920 height:1080 refreshRate:60.0];
+              CGVirtualDisplaySettings *settings = [[CGVirtualDisplaySettings alloc] init];
+              settings.hiDPI = 0;
+              settings.modes = @[ mode ];
+              if (![display applySettings:settings]) {
+                fprintf(stderr, "applySettings failed\n");
+                return 1;
+              }
+
+              CGDisplayConfigRef config = NULL;
+              if (CGBeginDisplayConfiguration(&config) == kCGErrorSuccess) {
+                CGConfigureDisplayOrigin(config, display.displayID, 0, 0);
+                CGError error = CGCompleteDisplayConfiguration(config, kCGConfigureForSession);
+                printf("set as main: %s (%d)\n", error == kCGErrorSuccess ? "yes" : "no", error);
+              }
+
+              printf("display id: %u\n", display.displayID);
+              fflush(stdout);
+
+              // Keep the process alive so the display outlives this step.
+              dispatch_main();
+            }
+            return 0;
+          }
+          OBJC
+          clang -framework Foundation -framework CoreGraphics -o out/vdisplay out/vdisplay.m
+          ./out/vdisplay >out/vdisplay.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if grep -q "display id" out/vdisplay.log 2>/dev/null; then break; fi
+            sleep 1
+          done
+          cat out/vdisplay.log
+          echo "--- displays after"
+          system_profiler SPDisplaysDataType | head -30
+      - name: Capture after
+        run: |
+          mkdir -p out
+          screencapture -x out/after.png && rc=0 || rc=$?
+          echo "screencapture rc=$rc"
+          ls -l out/before.png out/after.png 2>/dev/null || true
+          sips -g pixelWidth -g pixelHeight out/after.png 2>/dev/null || true
+      - name: Measure brightness
+        continue-on-error: true
+        run: |
+          brew install ffmpeg >/dev/null 2>&1 || true
+          command -v ffmpeg || echo "ffmpeg unavailable, judge by file size instead"
+          for file in out/before.png out/after.png; do
+            if [ ! -f "$file" ]; then continue; fi
+            printf '%s mean rgb:' "$file"
+            ffmpeg -v error -i "$file" -vf scale=1:1 -f rawvideo -pix_fmt rgb24 - 2>/dev/null | od -An -tu1 | tr -s ' \n' ' '
+            echo
+          done
+      - name: Upload probe output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-gui-probe
+          path: out/
+  vnc:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Dump launchd definition
+        run: |
+          plutil -p /System/Library/LaunchDaemons/com.apple.screensharing.plist
+          launchctl print system/com.apple.screensharing 2>&1 | head -40 || true
+      - name: Enable Screen Sharing
+        run: |
+          mkdir -p out
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysStartOnConsole -bool true
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on -users "$USER" -privs -all -restart -agent -console
+          sudo launchctl enable system/com.apple.screensharing
+          sudo launchctl kickstart -k system/com.apple.screensharing || true
+          for _ in $(seq 1 30); do
+            if nc -z 127.0.0.1 5900; then echo "5900 listening"; break; fi
+            sleep 1
+          done
+          nc -z 127.0.0.1 5900 || { echo "5900 never listened"; exit 1; }
+      - name: Capture local and VNC frames
+        run: |
+          mkdir -p out
+          cat > /tmp/kcpassword.py <<'PY'
+          import subprocess
+
+          key = [125, 137, 82, 35, 210, 188, 221, 234, 163, 185, 31]
+          out = subprocess.run(["sudo", "od", "-An", "-v", "-tu1", "/etc/kcpassword"],
+                               check=True, capture_output=True, text=True).stdout
+          clear = bytes(int(b) ^ key[i % len(key)] for i, b in enumerate(out.split()))
+          print(clear.split(b"\0", 1)[0].decode(), end="")
+          PY
+          PW=$(python3 /tmp/kcpassword.py)
+          echo "::add-mask::$PW"
+          if [ -z "$PW" ]; then
+            echo "failed to decode the console owner password"
+            exit 1
+          fi
+          screencapture -x out/local.png
+          python3 -m venv /tmp/vnc
+          /tmp/vnc/bin/pip install --quiet vncdotool
+          ls -l /tmp/vnc/bin/vncdo 2>/dev/null || echo "vncdo entry point missing"
+          capture() {
+            perl -e 'alarm shift; exec @ARGV' 120 /tmp/vnc/bin/vncdo -s 127.0.0.1::5900 --username "$USER" --password "$PW" capture "$1"
+          }
+          capture out/vnc.png || echo "vncdo failed with rc=$?"
+          ls -l out 2>/dev/null || true
+          log show --last 3m --style compact \
+            --predicate 'eventMessage CONTAINS[c] "screensharingd" OR eventMessage CONTAINS[c] "ScreenCapture"' \
+            >out/tcc.log 2>&1 || true
+          tail -40 out/tcc.log || true
+      - name: Try screensharingd from a job step
+        run: |
+          mkdir -p out
+          PW=$(python3 /tmp/kcpassword.py)
+          echo "::add-mask::$PW"
+          sudo launchctl bootout system/com.apple.screensharing 2>&1 || true
+          BIN=$(plutil -extract ProgramArguments.0 raw -o - /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true)
+          if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
+            BIN=/System/Library/CoreServices/RemoteManagement/screensharingd.bundle/Contents/MacOS/screensharingd
+          fi
+          ls -l "$BIN" 2>&1 || true
+          sudo "$BIN" 2>&1 | tee out/manual.log >/dev/null &
+          sleep 5
+          if nc -z 127.0.0.1 5900; then
+            echo "manual: 5900 listening"
+            perl -e 'alarm shift; exec @ARGV' 120 /tmp/vnc/bin/vncdo -s 127.0.0.1::5900 --username "$USER" --password "$PW" capture out/manual-vnc.png || echo "manual vncdo failed with rc=$?"
+          else
+            echo "manual: 5900 not listening"
+          fi
+          head -20 out/manual.log 2>/dev/null || true
+      - name: Compare frames
+        continue-on-error: true
+        run: |
+          brew install ffmpeg >/dev/null 2>&1 || true
+          for file in out/local.png out/vnc.png out/manual-vnc.png; do
+            if [ ! -f "$file" ]; then continue; fi
+            printf '%s mean rgb:' "$file"
+            ffmpeg -v error -i "$file" -vf scale=1:1 -f rawvideo -pix_fmt rgb24 - 2>/dev/null | od -An -tu1 | tr -s ' \n' ' '
+            echo
+          done
+      - name: Upload VNC probe output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-vnc-probe
+          path: out/
