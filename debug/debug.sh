@@ -32,11 +32,30 @@ for file in /usr/lib/openssh/sftp-server /usr/libexec/sftp-server; do
 done
 /usr/sbin/sshd -f ~/.ssh/sshd_config
 
-nix-env -f '<nixpkgs>' -iA cloudflared tmux
+mkdir -p ~/bin
+case "$RUNNER_ARCH" in
+ARM64) arch=arm64 ;;
+*) arch=amd64 ;;
+esac
+case "$RUNNER_OS" in
+Linux)
+  curl --no-progress-meter --fail --location \
+    --output ~/bin/cloudflared \
+    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$arch"
+  ;;
+macOS)
+  HOMEBREW_NO_AUTO_UPDATE=1 brew install tmux
+  curl --no-progress-meter --fail --location \
+    --output /tmp/cloudflared.tgz \
+    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-$arch.tgz"
+  tar -xzf /tmp/cloudflared.tgz --directory ~/bin cloudflared
+  ;;
+esac
+chmod 755 ~/bin/cloudflared
 
-cloudflared tunnel --no-autoupdate --url tcp://127.0.0.1:3456 >&/tmp/cloudflared.log &
+~/bin/cloudflared tunnel --no-autoupdate --url tcp://127.0.0.1:3456 >&/tmp/cloudflared.log &
 url=""
-for i in $(seq 60); do
+for _ in {1..60}; do
   if url=$(grep -o -m1 '[a-z-]*\.trycloudflare\.com' /tmp/cloudflared.log 2>/dev/null); then
     break
   fi
@@ -60,24 +79,16 @@ Host *.trycloudflare.com
 EOF
 echo "$url"
 
-# Add nix-profile to PATH
+# Print usage for the SSH session
 cat <<'EOF' >>~/.bash_profile
 
-nix_bin_path="$HOME/.nix-profile/bin"
-if [ -n "${PATH##*"$nix_bin_path"}" ] && [ -n "${PATH##*"$nix_bin_path":*}" ]
-then
-  export PATH="${nix_bin_path}:$PATH"
-fi
-
 >&2 cat <<EOL
-
 USAGE:
   tmux attach      # Enter the dev environment
   touch ~/continue # Continue the job
   touch ~/skip     # Skip the job
 EOL
 EOF
-export TERMINFO_DIRS="$HOME/.nix-profile/share/terminfo"
 tmux new-session -c "$GITHUB_WORKSPACE" -d
 
 if [ "$1" = "nopause" ]; then
