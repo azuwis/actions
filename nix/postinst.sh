@@ -24,13 +24,9 @@ if [ -e flake.lock ] && [ "$USE_NIXPKGS_IN_FLAKE" = true ]; then
     echo "Failed to get nixpkgs in flake.nix"
   fi
 elif [ -n "$NIXPKGS_URL" ]; then
-  if [ "$(nix-channel --list | awk '/^nixpkgs / {print $2}')" = "$NIXPKGS_URL" ]; then
-    echo "Skip setup nix-channel, use cached nixpkgs $NIXPKGS_URL"
-  else
-    echo "Setup nix-channel nixpkgs to $NIXPKGS_URL"
-    nix-channel --add "$NIXPKGS_URL" nixpkgs
-    nix-channel --update
-  fi
+  echo "Setup nix registry nixpkgs to $NIXPKGS_URL"
+  nix registry add nixpkgs "$NIXPKGS_URL"
+  echo "NIX_PATH=nixpkgs=flake:nixpkgs" >>"$GITHUB_ENV"
 fi
 
 echo "Setup ~/.nix-defexpr for nix-env"
