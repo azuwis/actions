@@ -59,11 +59,6 @@ Linux)
     sudo mkdir -p "${disks[0]}/nix" /nix
     sudo mount --bind "${disks[0]}/nix" /nix
   fi
-  # Workaround for nixbuild/nix-quick-install-action, it fails to run if /nix
-  # exists but is not writeable
-  if [ "$INSTALL_ACTION" = nixbuild ] && [ -e /nix ]; then
-    sudo chown "${USER}:" /nix
-  fi
   # Disable AppArmor unprivileged user namespace restriction, without this,
   # packages like `fence` fail to build due to test error: `bwrap: setting up
   # uid map: Permission denied`

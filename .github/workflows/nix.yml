@@ -28,15 +28,6 @@ on:
           - aarch64-darwin
           - all
         default: all
-      install_action:
-        description: Install action to use
-        type: choice
-        options: 
-          - cachix
-          - nixbuild
-          - nixos
-          - all
-        default: nixbuild
       btrfs:
         description: Enable BTRFS RAID0 on Linux
         type: boolean
@@ -74,13 +65,6 @@ jobs:
             inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
             '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest"]'
           )))))) }}
-        install_action: >-
-          ${{ fromJSON(
-            inputs.install_action == 'cachix' && '[ "cachix" ]' || (
-            inputs.install_action == 'nixbuild' && '[ "nixbuild" ]' || (
-            inputs.install_action == 'nixos' && '[ "nixos" ]' || (
-            '[ "cachix", "nixbuild", "nixos" ]'
-          )))) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -90,7 +74,6 @@ jobs:
         with:
           btrfs: ${{ inputs.btrfs }}
           clean: ${{ inputs.clean }}
-          install_action: ${{ matrix.install_action }}
       - uses: ./nix/post
   nix_with_cache:
     needs: nix
@@ -106,21 +89,12 @@ jobs:
             inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
             '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest"]'
           )))))) }}
-        install_action: >-
-          ${{ fromJSON(
-            inputs.install_action == 'cachix' && '[ "cachix" ]' || (
-            inputs.install_action == 'nixbuild' && '[ "nixbuild" ]' || (
-            inputs.install_action == 'nixos' && '[ "nixos" ]' || (
-            '[ "cachix", "nixbuild", "nixos" ]'
-          )))) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./nix
-        with:
-          install_action: ${{ matrix.install_action }}
       - name: Test if restore from cache success
         run: |
           [ -e /nix/store.bak ] && [ ! -e /nix/store.failed ]
@@ -142,13 +116,6 @@ jobs:
             inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
             '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest"]'
           )))))) }}
-        install_action: >-
-          ${{ fromJSON(
-            inputs.install_action == 'cachix' && '[ "cachix" ]' || (
-            inputs.install_action == 'nixbuild' && '[ "nixbuild" ]' || (
-            inputs.install_action == 'nixos' && '[ "nixos" ]' || (
-            '[ "cachix", "nixbuild", "nixos" ]'
-          )))) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -158,4 +125,3 @@ jobs:
         with:
           btrfs: true
           clean: true
-          install_action: ${{ matrix.install_action }}

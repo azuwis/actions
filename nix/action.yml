@@ -14,9 +14,6 @@ inputs:
   key:
     description: Key to actions/cache
     default: nix
-  install_action:
-    description: Set `nixbuild` to use nixbuild/nix-quick-install-action, `nixos` to use NixOS/nix-installer-action `cachix` to use cachix/install-nix-action
-    default: cachix
   use_nixpkgs_in_flake:
     description: Use nixpkgs defined in flake.nix
     default: true
@@ -36,33 +33,17 @@ runs:
       env:
         CLEAN: ${{ inputs.clean }}
         BTRFS: ${{ inputs.btrfs }}
-        INSTALL_ACTION: ${{ inputs.install_action }}
       run: exec ${{ github.action_path }}/prepare.sh
-    - uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
-      if: ${{ inputs.install_action == 'nixbuild' }}
-      with:
-        nix_conf: |
-          ${{ runner.os == 'macOS' && 'sandbox = relaxed' || '' }}
-          ${{ inputs.nix_conf }}
-          ${{ inputs.extra_nix_conf }}
     - uses: NixOS/nix-installer-action@62c1943b776c509394b550f3f983adc14e9212d6 # v1.0.0
-      if: ${{ inputs.install_action == 'nixos' }}
       with:
         extra-conf: |
-          ${{ runner.os == 'macOS' && 'sandbox = relaxed' || '' }}
-          ${{ inputs.nix_conf }}
-          ${{ inputs.extra_nix_conf }}
-    - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
-      if: ${{ inputs.install_action == 'cachix' }}
-      with:
-        extra_nix_config: |
           ${{ runner.os == 'macOS' && 'sandbox = relaxed' || '' }}
           ${{ inputs.nix_conf }}
           ${{ inputs.extra_nix_conf }}
     - name: Nix restore pre
       shell: bash
       env:
-        CACHE_KEY: ${{ inputs.key }}-${{ inputs.install_action }}
+        CACHE_KEY: ${{ inputs.key }}
       run: exec ${{ github.action_path }}/restore.sh pre
     - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
