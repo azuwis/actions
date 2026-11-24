@@ -74,6 +74,7 @@ jobs:
         with:
           btrfs: ${{ inputs.btrfs }}
           clean: ${{ inputs.clean }}
+          key: nix
       - uses: ./nix/post
   nix_with_cache:
     needs: nix
@@ -95,6 +96,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./nix
+        with:
+          key: nix
       - name: Test if restore from cache success
         run: |
           [ -e /nix/store.bak ] && [ ! -e /nix/store.failed ]
@@ -103,7 +106,6 @@ jobs:
         run: |
           [ "$CACHE_NEED_UPDATE" != yes ]
   nix_with_clean:
-    needs: nix
     strategy:
       fail-fast: false
       matrix:
