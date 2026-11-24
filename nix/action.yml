@@ -13,7 +13,7 @@ inputs:
     default: ""
   key:
     description: Key to actions/cache
-    default: nix
+    default: ""
   use_nixpkgs_in_flake:
     description: Use nixpkgs defined in flake.nix
     default: true
@@ -41,11 +41,13 @@ runs:
           ${{ inputs.nix_conf }}
           ${{ inputs.extra_nix_conf }}
     - name: Nix restore pre
+      if: ${{ inputs.key }}
       shell: bash
       env:
         CACHE_KEY: ${{ inputs.key }}
       run: exec ${{ github.action_path }}/restore.sh pre
     - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: ${{ inputs.key }}
       with:
         key: ${{ env.CACHE_KEY }}-${{ env.CURRENT_SYSTEM }}-${{ env.CACHE_TIMESTAMP }}
         restore-keys: |
@@ -60,6 +62,7 @@ runs:
           ~/.nix-channels
           ~/.nix-defexpr
     - name: Nix restore post
+      if: ${{ inputs.key }}
       shell: bash
       run: exec ${{ github.action_path }}/restore.sh post
     - shell: bash
