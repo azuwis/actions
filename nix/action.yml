@@ -19,7 +19,7 @@ inputs:
     default: true
   nixpkgs_url:
     description: Nixpkgs URL, or a release version in `YY.MM` form which expands to https://channels.nixos.org/nixos-YY.MM, or https://channels.nixos.org/nixpkgs-YY.MM-darwin on macOS. Empty skips nix-channel setup
-    default: "26.05"
+    default: ""
   clean:
     description: Clean up disk space
     default: false
