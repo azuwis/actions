@@ -55,14 +55,12 @@ jobs:
           persist-credentials: false
       - uses: ./nix
         with:
-          key: nixpkgs-review
           extra_nix_conf: ${{ inputs.extra_nix_conf }}
           clean: ${{ inputs.btrfs }}
           btrfs: ${{ inputs.btrfs }}
       - name: Install tools
         run: |
           nix-env -f '<nixpkgs>' -iA nixpkgs-review
-      - uses: ./nix/post
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
