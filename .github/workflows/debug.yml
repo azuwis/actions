@@ -1,0 +1,54 @@
+name: Debug
+permissions: {}
+on:
+  pull_request:
+    paths:
+      - 'debug/**'
+      - .github/workflows/debug.yml
+  push:
+    # Only include top-level branches, ignore branches like dependabot/*
+    branches:
+      - '*'
+    paths:
+      - 'debug/**'
+      - .github/workflows/debug.yml
+  workflow_dispatch:
+    inputs:
+      pause:
+        description: Enable pause
+        type: boolean
+        default: false
+      os:
+        description: OS to run
+        type: choice
+        options:
+          - linux
+          - darwin
+          - aarch64-linux
+          - x86_64-linux
+          - aarch64-darwin
+          - all
+        default: all
+jobs:
+  debug:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: >-
+          ${{ fromJSON(
+            inputs.os == 'linux' && '["ubuntu-latest", "ubuntu-24.04-arm"]' || (
+            inputs.os == 'darwin' && '["macos-latest"]' || (
+            inputs.os == 'aarch64-linux' && '["ubuntu-24.04-arm"]' || (
+            inputs.os == 'x86_64-linux' && '["ubuntu-latest"]' || (
+            inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
+            '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest"]'
+          )))))) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./debug
+        with:
+          pause: ${{ inputs.pause }}
+      - run: tmux ls
