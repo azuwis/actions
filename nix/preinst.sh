@@ -70,7 +70,7 @@ macOS)
     /Library/Developer/CoreSimulator \
     /Users/runner/Library/Developer/CoreSimulator || true
   # Disable MDS service on macOS
-  sudo mdutil -i off -a || true
+  sudo mdutil -i off -d / || true
   sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist || true
   if [ "$CLEAN" = true ]; then
     echo "Disk clean, before:"
