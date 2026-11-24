@@ -61,7 +61,9 @@ runs:
           ~/.nix-defexpr
     - name: Nix restore post
       shell: bash
+      run: exec ${{ github.action_path }}/restore.sh post
+    - shell: bash
       env:
         USE_NIXPKGS_IN_FLAKE: ${{ inputs.use_nixpkgs_in_flake }}
         NIXPKGS_URL: ${{ !contains(inputs.nixpkgs_url, '/') && contains(inputs.nixpkgs_url, '.') && format(runner.os == 'macOS' && 'https://channels.nixos.org/nixpkgs-{0}-darwin' || 'https://channels.nixos.org/nixos-{0}', inputs.nixpkgs_url) || inputs.nixpkgs_url }}
-      run: exec ${{ github.action_path }}/restore.sh post
+      run: exec ${{ github.action_path }}/postinst.sh
