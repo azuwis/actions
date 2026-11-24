@@ -82,12 +82,10 @@ echo "$url"
 # Print usage for the SSH session
 cat <<'EOF' >>~/.bash_profile
 
->&2 cat <<EOL
-USAGE:
+>&2 echo 'USAGE:
   tmux attach      # Enter the dev environment
   touch ~/continue # Continue the job
-  touch ~/skip     # Skip the job
-EOL
+  touch ~/skip     # Skip the job'
 EOF
 tmux new-session -c "$GITHUB_WORKSPACE" -d
 
