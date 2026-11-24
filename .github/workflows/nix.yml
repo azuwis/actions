@@ -17,10 +17,6 @@ on:
       - .github/workflows/nix.yml
   workflow_dispatch:
     inputs:
-      debug:
-        description: Enable debug
-        type: boolean
-        default: false
       os:
         description: OS to run
         type: choice
@@ -51,7 +47,6 @@ on:
         default: false
 jobs:
   clear_cache:
-    if: ${{ ! inputs.debug }}
     permissions:
       actions: write
     runs-on: ubuntu-latest
@@ -95,11 +90,9 @@ jobs:
         with:
           btrfs: ${{ inputs.btrfs }}
           clean: ${{ inputs.clean }}
-          debug: ${{ inputs.debug }}
           install_action: ${{ matrix.install_action }}
       - uses: ./nix/post
   nix_with_cache:
-    if: ${{ ! inputs.debug }}
     needs: nix
     strategy:
       fail-fast: false
@@ -136,7 +129,6 @@ jobs:
         run: |
           [ "$CACHE_NEED_UPDATE" != yes ]
   nix_with_clean:
-    if: ${{ ! inputs.debug }}
     needs: nix
     strategy:
       fail-fast: false

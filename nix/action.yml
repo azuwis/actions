@@ -29,12 +29,6 @@ inputs:
   btrfs:
     description: Use BTRFS to setup RAID0
     default: false
-  debug:
-    description: Enable debug
-    default: false
-  debug_token:
-    default: ${{ github.token }}
-    description: Set github token for gh cli
 runs:
   using: composite
   steps:
@@ -90,10 +84,3 @@ runs:
         USE_NIXPKGS_IN_FLAKE: ${{ inputs.use_nixpkgs_in_flake }}
         NIXPKGS_URL: ${{ !contains(inputs.nixpkgs_url, '/') && contains(inputs.nixpkgs_url, '.') && format(runner.os == 'macOS' && 'https://channels.nixos.org/nixpkgs-{0}-darwin' || 'https://channels.nixos.org/nixos-{0}', inputs.nixpkgs_url) || inputs.nixpkgs_url }}
       run: exec ${{ github.action_path }}/restore.sh post
-    - name: Debug
-      if: ${{ inputs.debug == true || inputs.debug == 'true' || inputs.debug == 'nopause' }}
-      shell: bash
-      env:
-        DEBUG: ${{ inputs.debug }}
-        GH_TOKEN: ${{ inputs.debug_token }}
-      run: exec ${{ github.action_path }}/../debug/debug.sh "$DEBUG"

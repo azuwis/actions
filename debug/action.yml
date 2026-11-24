@@ -3,11 +3,14 @@ inputs:
   debug_token:
     description: GitHub token for gh CLI
     default: ${{ github.token }}
+  pause:
+    description: Pause after setup
+    default: 'true'
 runs:
   using: composite
   steps:
     - name: Debug
       shell: bash
-      run: exec ${{ github.action_path }}/debug.sh
+      run: exec "${{ github.action_path }}/debug.sh" ${{ inputs.pause != 'true' && 'nopause' || '' }}
       env:
         GH_TOKEN: ${{ inputs.debug_token }}
