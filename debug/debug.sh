@@ -61,11 +61,11 @@ for _ in {1..60}; do
   fi
   sleep 2
 done
+cat /tmp/cloudflared.log
 if [ -z "$url" ]; then
   echo "Timeout waiting for cloudflared URL"
   exit 1
 fi
-cat /tmp/cloudflared.log
 cat <<'EOF'
 
 Add to ~/.ssh/config:
