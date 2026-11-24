@@ -68,5 +68,13 @@ runs:
     - shell: bash
       env:
         USE_NIXPKGS_IN_FLAKE: ${{ inputs.use_nixpkgs_in_flake }}
-        NIXPKGS_URL: ${{ !contains(inputs.nixpkgs_url, '/') && contains(inputs.nixpkgs_url, '.') && format(runner.os == 'macOS' && 'https://channels.nixos.org/nixpkgs-{0}-darwin/nixexprs.tar.zst' || 'https://channels.nixos.org/nixos-{0}/nixexprs.tar.zst', inputs.nixpkgs_url) || inputs.nixpkgs_url }}
+        NIXPKGS_URL: >-
+          ${{
+            !contains(inputs.nixpkgs_url, '/') && contains(inputs.nixpkgs_url, '.') &&
+            format(
+              runner.os == 'macOS' && 'https://channels.nixos.org/nixpkgs-{0}-darwin/nixexprs.tar.zst' ||
+              'https://channels.nixos.org/nixos-{0}/nixexprs.tar.zst',
+              inputs.nixpkgs_url
+            ) || inputs.nixpkgs_url
+          }}
       run: exec ${{ github.action_path }}/postinst.sh
