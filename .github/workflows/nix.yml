@@ -28,14 +28,6 @@ on:
           - aarch64-darwin
           - all
         default: all
-      btrfs:
-        description: Enable BTRFS RAID0 on Linux
-        type: boolean
-        default: false
-      clean:
-        description: Clean for max disk space
-        type: boolean
-        default: false
 jobs:
   clear_cache:
     permissions:
@@ -72,8 +64,6 @@ jobs:
           persist-credentials: false
       - uses: ./nix
         with:
-          btrfs: ${{ inputs.btrfs }}
-          clean: ${{ inputs.clean }}
           key: nix
       - uses: ./nix/post
   nix_with_cache:
