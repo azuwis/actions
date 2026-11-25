@@ -20,7 +20,7 @@ on:
       os:
         description: OS to run
         type: choice
-        options: 
+        options:
           - linux
           - darwin
           - aarch64-linux
@@ -53,7 +53,7 @@ jobs:
   nix:
     needs: clear_cache
     if: ${{ always() && !failure() && !cancelled() }}
-    strategy:
+    strategy: &strategy
       fail-fast: false
       matrix:
         os: >-
@@ -78,18 +78,7 @@ jobs:
       - uses: ./nix/post
   nix_with_cache:
     needs: nix
-    strategy:
-      fail-fast: false
-      matrix:
-        os: >-
-          ${{ fromJSON(
-            inputs.os == 'linux' && '["ubuntu-latest", "ubuntu-24.04-arm"]' || (
-            inputs.os == 'darwin' && '["macos-latest"]' || (
-            inputs.os == 'aarch64-linux' && '["ubuntu-24.04-arm"]' || (
-            inputs.os == 'x86_64-linux' && '["ubuntu-latest"]' || (
-            inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
-            '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest"]'
-          )))))) }}
+    strategy: *strategy
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -106,18 +95,7 @@ jobs:
         run: |
           [ "$CACHE_NEED_UPDATE" != yes ]
   nix_with_clean:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: >-
-          ${{ fromJSON(
-            inputs.os == 'linux' && '["ubuntu-latest", "ubuntu-24.04-arm"]' || (
-            inputs.os == 'darwin' && '["macos-latest"]' || (
-            inputs.os == 'aarch64-linux' && '["ubuntu-24.04-arm"]' || (
-            inputs.os == 'x86_64-linux' && '["ubuntu-latest"]' || (
-            inputs.os == 'aarch64-darwin' && '["macos-latest"]' || (
-            '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest"]'
-          )))))) }}
+    strategy: *strategy
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
