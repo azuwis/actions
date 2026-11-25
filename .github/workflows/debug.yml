@@ -14,10 +14,6 @@ on:
       - .github/workflows/debug.yml
   workflow_dispatch:
     inputs:
-      pause:
-        description: Enable pause
-        type: boolean
-        default: false
       os:
         description: OS to run
         type: choice
@@ -29,6 +25,22 @@ on:
           - aarch64-darwin
           - all
         default: all
+      pause:
+        description: Enable pause
+        type: boolean
+        default: true
+      nix:
+        description: Enable Nix
+        type: boolean
+        default: true
+      btrfs:
+        description: Enable BTRFS RAID0 on Linux
+        type: boolean
+        default: false
+      clean:
+        description: Clean for max disk space
+        type: boolean
+        default: false
 jobs:
   debug:
     strategy:
@@ -48,6 +60,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./nix
+        if: ${{ inputs.nix }}
+        with:
+          btrfs: ${{ inputs.btrfs }}
+          clean: ${{ inputs.clean }}
       - uses: ./debug
         with:
           pause: ${{ inputs.pause }}
